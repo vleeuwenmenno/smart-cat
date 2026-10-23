@@ -38,3 +38,7 @@ All of `cat`'s flags work (`-n -b -s -A -v -E -T -e -t`). Shell completions: `sc
 ## Docs
 
 See [docs/](docs/README.md).
+
+## License
+
+[MIT](LICENSE)

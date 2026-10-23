@@ -82,7 +82,7 @@ dist:
 	@if command -v rustup >/dev/null 2>&1; then rustup target add $(TARGET) >/dev/null; fi
 	env $(DIST_CC_VAR)=$(DIST_CC) $(CARGO) build --release --locked --target $(TARGET)
 	mkdir -p dist/stage
-	cp target/$(TARGET)/release/scat README.md dist/stage/
+	cp target/$(TARGET)/release/scat README.md LICENSE dist/stage/
 	@# Completions and the man page come from the binary itself, so only a native build can make them.
 	@if [ "$(TARGET_ARCH)" = "$$(uname -m)" ]; then \
 		mkdir -p dist/stage/completions; \
