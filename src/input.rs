@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{self, BufReader, Read};
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::PathBuf;
 
@@ -60,18 +61,22 @@ pub struct Input {
     pub kind: InputKind,
     /// Device and inode, to detect "input file is output file".
     pub identity: Option<(u64, u64)>,
+    /// The descriptor `reader` reads from, for the kernel copy in `fastcopy`. Only valid
+    /// while `reader` is the opened file itself: set to `None` when it is replaced.
+    pub fd: Option<RawFd>,
 }
 
 pub fn open(source: &Source) -> io::Result<Input> {
-    let (reader, meta): (Box<dyn Read>, std::fs::Metadata) = match source {
+    let (reader, meta, fd): (Box<dyn Read>, std::fs::Metadata, RawFd) = match source {
         Source::Stdin => {
             let meta = stdin_metadata()?;
-            (Box::new(io::stdin()), meta)
+            (Box::new(io::stdin()), meta, io::stdin().as_raw_fd())
         }
         Source::Path(path) => {
             let file = File::open(path)?;
             let meta = file.metadata()?;
-            (Box::new(file), meta)
+            let fd = file.as_raw_fd();
+            (Box::new(file), meta, fd)
         }
     };
     let file_type = meta.file_type();
@@ -89,6 +94,7 @@ pub fn open(source: &Source) -> io::Result<Input> {
         reader: BufReader::with_capacity(64 * 1024, reader),
         kind,
         identity: Some((meta.dev(), meta.ino())),
+        fd: Some(fd),
     })
 }
 

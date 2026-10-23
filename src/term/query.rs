@@ -96,6 +96,13 @@ pub fn query(timeout: Duration) -> io::Result<Capabilities> {
     let started = Instant::now();
     let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
 
+    // A background job would be stopped by SIGTTOU when it switches the terminal mode.
+    if !super::in_foreground(&tty) {
+        return Err(io::Error::other(
+            "not in the terminal's foreground process group",
+        ));
+    }
+
     // Input already waiting (typeahead) would be mixed with the answers and consumed;
     // skip the query and let the caller fall back to environment hints.
     if rustix::io::ioctl_fionread(&tty).unwrap_or(0) > 0 {

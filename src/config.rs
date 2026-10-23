@@ -348,6 +348,7 @@ impl Matcher {
 /// `image/*` style matching; `*` alone matches everything.
 fn mime_matches(pattern: &str, mime: &str) -> bool {
     match pattern.strip_suffix("/*") {
+        Some("*") => true,
         Some(prefix) => mime.split('/').next() == Some(prefix),
         None => pattern == "*" || pattern.eq_ignore_ascii_case(mime),
     }
@@ -555,6 +556,20 @@ mod tests {
         assert!(m.matches(Some("README.md"), "text/plain"));
         assert!(!m.matches(Some("md"), "text/plain"));
         assert!(!m.matches(None, "text/plain"));
+    }
+
+    #[test]
+    fn mime_wildcards() {
+        for pattern in ["*", "*/*"] {
+            assert!(mime_matches(pattern, "text/plain"), "{pattern}");
+            assert!(
+                mime_matches(pattern, "application/octet-stream"),
+                "{pattern}"
+            );
+        }
+        assert!(mime_matches("text/*", "text/x-rust"));
+        assert!(!mime_matches("text/*", "image/png"));
+        assert!(mime_matches("IMAGE/PNG", "image/png"));
     }
 
     #[test]

@@ -32,6 +32,13 @@ pub fn term_name() -> Option<String> {
 }
 
 /// Terminals that never answer queries and support no graphics.
+/// Whether this process is in the foreground process group of the terminal `fd`.
+/// A background job (`scat file &`) that changes the terminal mode is stopped with
+/// SIGTTOU, and one that reads the terminal (a pager) with SIGTTIN; cat would just print.
+pub fn in_foreground<Fd: std::os::fd::AsFd>(fd: Fd) -> bool {
+    rustix::termios::tcgetpgrp(fd).is_ok_and(|pgrp| pgrp == rustix::process::getpgrp())
+}
+
 pub fn is_basic_terminal() -> bool {
     match term_name().as_deref() {
         None => true,

@@ -11,6 +11,7 @@ use crate::cli::Cli;
 use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, PagingMode, Renderer};
 use crate::decompress;
 use crate::detect::{self, Kind, SNIFF_BYTES};
+use crate::fastcopy;
 use crate::header;
 use crate::hexdump;
 use crate::highlight::{self, Assets};
@@ -59,7 +60,11 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
         mode,
         stdout_tty,
         render,
-        mode != PagingMode::Never && stdout_tty && render && all_pageable(&sources, &ctx),
+        mode != PagingMode::Never
+            && stdout_tty
+            && render
+            && term::in_foreground(&stdout)
+            && all_pageable(&sources, &ctx),
     );
     let mut output = pager::Output::new(stdout.lock(), pager::plan(decision));
     let paged = output.is_paged();
@@ -212,6 +217,9 @@ fn process<W: Write>(
     }
 
     if !render || input.kind == InputKind::Device {
+        if ctx.cat_options.is_passthrough() {
+            return fastcopy::copy(&mut input, out);
+        }
         return write_cat(&mut input, out, &ctx.cat_options, cat_state);
     }
     if ctx.show_headers {
@@ -240,6 +248,7 @@ fn process<W: Write>(
         input.reader = BufReader::with_capacity(64 * 1024, reader);
         input.kind = InputKind::Stream;
         input.identity = None;
+        input.fd = None;
         truncated = Some(hit);
         file_name = file_name.map(|name| decompress::inner_name(&name));
         head = sniff(&mut input)?;
