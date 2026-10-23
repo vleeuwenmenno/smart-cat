@@ -1,6 +1,7 @@
 //! `scat --diagnose`: what scat detected about the terminal, config and files.
 
 use std::io::{BufRead, IsTerminal};
+use std::time::SystemTime;
 
 use crate::cli::Cli;
 use crate::config::{Loaded, Renderer};
@@ -36,13 +37,24 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
         println!("  warning: {warning}");
     }
     println!("  rules: {}", config.rules.len());
+    let strict = crate::util::invoked_as_cat() && !config.cat_mode.render;
+    let invoked = if !crate::util::invoked_as_cat() {
+        "scat"
+    } else if config.cat_mode.render {
+        "cat; rendering as scat ([cat_mode] render = true), messages say cat:"
+    } else {
+        "cat; strict mode: output exactly like GNU cat ([cat_mode] render = false)"
+    };
+    println!("  invoked as: {invoked}");
 
     let stdout_tty = std::io::stdout().is_terminal();
     let when = cli.color.unwrap_or(config.defaults.color);
     println!("\noutput");
     println!(
         "  stdout: {}",
-        if stdout_tty {
+        if stdout_tty && strict {
+            "terminal (rendering off: invoked as cat; -f still renders)"
+        } else if stdout_tty {
             "terminal (rendering on)"
         } else {
             "not a terminal (cat-compatible output unless --force-render)"
@@ -61,6 +73,25 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
     println!("  UTF-8 locale: {}", yes_no(term::utf8_locale()));
     println!("  multiplexer: {}", term::multiplexer().unwrap_or("none"));
 
+    let mode = cli.paging.unwrap_or(config.defaults.paging);
+    let terminal = crate::pager::Terminal::detect();
+    println!("\npaging");
+    println!("  mode: {mode:?}");
+    println!(
+        "  stdin terminal: {}, foreground: {}, own process group: {}",
+        yes_no(terminal.stdin_tty),
+        yes_no(terminal.foreground),
+        yes_no(terminal.job_leader)
+    );
+    println!(
+        "  auto would page long output: {}",
+        match terminal.auto_blocker() {
+            _ if strict => "no (invoked as cat)".to_string(),
+            None => "yes".to_string(),
+            Some(reason) => format!("no ({reason})"),
+        }
+    );
+
     println!("\nenvironment");
     for name in term::HINT_VARS {
         if let Some(value) = term::hint(name) {
@@ -69,6 +100,19 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
     }
 
     println!("\nterminal query (/dev/tty)");
+    let cache = term::cache::dir().zip(term::cache::Key::current());
+    match (&cache, term::cache::dir()) {
+        (Some((dir, key)), _) => match term::cache::load(dir, key, SystemTime::now()) {
+            Some(entry) => println!(
+                "  cache: entry from {} s ago in {} (querying fresh anyway)",
+                entry.age.as_secs(),
+                dir.display()
+            ),
+            None => println!("  cache: no fresh entry in {}", dir.display()),
+        },
+        (None, None) => println!("  cache: off (XDG_RUNTIME_DIR is not set)"),
+        (None, Some(_)) => println!("  cache: off (no controlling terminal)"),
+    }
     let caps = if term::is_basic_terminal() {
         println!(
             "  skipped: TERM={} does not answer queries",
@@ -77,7 +121,12 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
         None
     } else {
         match query::query(query::DEFAULT_TIMEOUT) {
-            Ok(caps) => Some(caps),
+            Ok(caps) => {
+                if let Some((dir, key)) = &cache {
+                    let _ = term::cache::store(dir, key, &caps, SystemTime::now());
+                }
+                Some(caps)
+            }
             Err(err) => {
                 println!("  failed: {}", io_message(&err));
                 None

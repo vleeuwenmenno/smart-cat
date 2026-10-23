@@ -108,8 +108,8 @@ pub fn render<W: Write>(
     let (selected, missing) = opts.pages.resolve(info.pages);
     if let Some(page) = missing {
         out.flush()?;
-        eprintln!(
-            "scat: {}: no page {page} (the document has {})",
+        crate::report!(
+            "{}: no page {page} (the document has {})",
             opts.name,
             plural(info.pages, "page")
         );

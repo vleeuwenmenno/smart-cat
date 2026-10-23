@@ -49,7 +49,7 @@ Run `make check` before handing work back.
 | `src/input.rs` | opening files and stdin, file kinds |
 | `src/config.rs` + `src/config_template.toml` | TOML config, rules, `--init-config` |
 | `src/image/` | image view: decoding (image crate, resvg), kitty/sixel/block/ASCII encoders, sizing, animation; `image::show` for other renderers |
-| `src/term/` | colour depth, env hints, and the batched `/dev/tty` capability query |
+| `src/term/` | colour depth, env hints, the batched `/dev/tty` capability query and its cache in `$XDG_RUNTIME_DIR` |
 | `src/decompress.rs` | gzip/xz/zstd/bzip2 stream decoders (pure Rust) with a size cap |
 | `src/linestyle.rs` | per-line diff and log colouring |
 | `src/diagnose.rs` | `--diagnose` report |
@@ -57,6 +57,7 @@ Run `make check` before handing work back.
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
 | `tests/script_compat.rs` | shell idioms (`sh -c`, `bash -c`) run with GNU cat and scat: output, status, messages |
 | `tests/archive.rs` | archive views with zip, tar, tar.gz, 7z and deb fixtures built in the test |
+| `tests/cat_mode.rs` | strict mode through a `cat` symlink and the script-safe paging rule, on a pty via `script` |
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
 | `tests/binary.rs` | binary summaries: system binaries, a hand-built wasm module, hex fallback |
 | `tests/images.rs` | forced image output, captions, piped image bytes |

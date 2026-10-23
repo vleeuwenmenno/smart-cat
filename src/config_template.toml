@@ -118,6 +118,12 @@ max_entries = 500
 # per spreadsheet sheet before a "... more rows" note; 0 shows every row.
 max_rows = 200
 
+[cat_mode]
+# Started under the name `cat` (a `cat -> scat` symlink), scat behaves exactly like
+# GNU cat: no rendering, paging, directory listing or terminal query, and messages say
+# `cat:`. Set true to render on a terminal as `scat` does (messages still say `cat:`).
+render = false
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"

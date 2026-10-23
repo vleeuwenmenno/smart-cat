@@ -47,8 +47,32 @@ fn fixtures(name: &str) -> PathBuf {
 
 struct Run {
     stdout: Vec<u8>,
+    /// Standard error with the program name taken out of each message.
     stderr: String,
+    /// Standard error as written.
+    raw_stderr: String,
     status: Option<i32>,
+}
+
+/// A `cat` symlink to scat: invoked under that name, scat is strict and its messages
+/// must match GNU cat's exactly, program name included.
+fn cat_symlink() -> PathBuf {
+    // Tests run on parallel threads of one process; create the link once.
+    static LINK: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    LINK.get_or_init(make_cat_symlink).clone()
+}
+
+fn make_cat_symlink() -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("script-compat-bin");
+    std::fs::create_dir_all(&dir).unwrap();
+    let link = dir.join("cat");
+    if std::fs::read_link(&link).ok().as_deref() != Some(Path::new(SCAT)) {
+        let temp = dir.join(format!("cat.{}", std::process::id()));
+        let _ = std::fs::remove_file(&temp);
+        std::os::unix::fs::symlink(SCAT, &temp).unwrap();
+        std::fs::rename(&temp, &link).unwrap();
+    }
+    link
 }
 
 fn run(shell: &str, cat: &str, snippet: &str, dir: &Path) -> Run {
@@ -64,7 +88,8 @@ fn run(shell: &str, cat: &str, snippet: &str, dir: &Path) -> Run {
         .env("LC_ALL", "C")
         .output()
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr)
+    let raw_stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let stderr = raw_stderr
         .lines()
         .map(|line| {
             let line = line
@@ -78,6 +103,7 @@ fn run(shell: &str, cat: &str, snippet: &str, dir: &Path) -> Run {
     Run {
         stdout: out.stdout,
         stderr,
+        raw_stderr,
         status: out.status.code(),
     }
 }
@@ -88,25 +114,38 @@ fn compare(name: &str, shell: &str, snippets: &[&str], check_stderr: bool) {
         eprintln!("GNU cat not found, skipping");
         return;
     }
+    let symlink = cat_symlink();
+    let symlink = symlink.to_str().unwrap();
     for snippet in snippets {
         // Fresh fixtures for each run: snippets append to and create files.
         let gnu = run(shell, "cat", snippet, &fixtures(name));
-        let ours = run(shell, SCAT, snippet, &fixtures(name));
-        assert_eq!(
-            String::from_utf8_lossy(&gnu.stdout),
-            String::from_utf8_lossy(&ours.stdout),
-            "stdout differs for: {snippet}"
-        );
-        assert!(
-            gnu.stdout == ours.stdout,
-            "stdout bytes differ for: {snippet}"
-        );
-        assert_eq!(
-            gnu.status, ours.status,
-            "exit status differs for: {snippet}"
-        );
-        if check_stderr {
-            assert_eq!(gnu.stderr, ours.stderr, "stderr differs for: {snippet}");
+        for program in [SCAT, symlink] {
+            let ours = run(shell, program, snippet, &fixtures(name));
+            assert_eq!(
+                String::from_utf8_lossy(&gnu.stdout),
+                String::from_utf8_lossy(&ours.stdout),
+                "stdout differs for: {snippet} ({program})"
+            );
+            assert!(
+                gnu.stdout == ours.stdout,
+                "stdout bytes differ for: {snippet} ({program})"
+            );
+            assert_eq!(
+                gnu.status, ours.status,
+                "exit status differs for: {snippet} ({program})"
+            );
+            if check_stderr {
+                assert_eq!(
+                    gnu.stderr, ours.stderr,
+                    "stderr differs for: {snippet} ({program})"
+                );
+            }
+            if check_stderr && program == symlink {
+                assert_eq!(
+                    gnu.raw_stderr, ours.raw_stderr,
+                    "stderr differs for: {snippet} (as cat)"
+                );
+            }
         }
     }
 }

@@ -141,7 +141,10 @@ pub fn run_within(mut cmd: Command, timeout: Duration) -> Result<Vec<u8>, RunErr
     if !status.success() {
         let text = String::from_utf8_lossy(&stderr);
         let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-        let line = line.strip_prefix("scat: ").unwrap_or(line);
+        let line = line
+            .strip_prefix("scat: ")
+            .or_else(|| line.strip_prefix("cat: "))
+            .unwrap_or(line);
         return Err(RunError::Failed(line.chars().take(200).collect()));
     }
     Ok(stdout)

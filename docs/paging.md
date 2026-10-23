@@ -8,10 +8,41 @@ All of these must hold:
 
 - standard output is a terminal, and scat is rendering (not `--raw`, not a cat flag like `-A`, not piped);
 - every file is text-like: source, markdown, plain text, directory listings (except tiles with kitty or sixel thumbnails), or a [hex dump](rendering.md#hex-dump). Any image, audio, video or PDF in the list, a markdown file with images (`![...]`), or a compressed file turns paging off for the whole run, because a pager cannot show graphics and `--play` hands the terminal to mpv;
-- no file comes from standard input (scat cannot look at a stream ahead of time).
-- scat is in the terminal's foreground process group. A background job (`scat log &`) prints directly, as cat does; a pager there would be stopped by the shell until you bring it to the foreground.
+- no file comes from standard input (scat cannot look at a stream ahead of time);
+- scat is in the terminal's foreground process group. A background job (`scat log &`) prints directly, as cat does; a pager there would be stopped by the shell until you bring it to the foreground;
+- scat was not started under the name `cat` (a `cat -> scat` symlink is strict, see [using-as-cat.md](using-as-cat.md)), unless `[cat_mode] render = true` is set.
 
-Scat decides from the file list before it prints anything, by sniffing the first 8 KiB of each file. In `auto` mode the output is held back until it would fill the screen. Short output is written directly and no pager starts. That is why `auto` is the default: nothing changes for `scat small.txt`, and the pager only appears when you need it. With `always`, the pager starts for any output.
+In `auto` mode two more conditions must hold, so that only a person at the prompt gets a pager:
+
+- standard input is a terminal too;
+- scat leads its own process group.
+
+### Why the process group
+
+The goal: `cat bigfile` inside a script run from a terminal must never wait in `less`. Standard input and output are both the terminal there, and the script is in the foreground, so those checks do not tell a script apart from a prompt.
+
+Process groups do. A shell with job control (every interactive bash, zsh and fish) starts each command line you type as a new process group, with the first command as its leader. A script runs without job control, so the commands it starts stay in the script's own group and are never its leader. The same holds for anything else that starts scat as a child: `make`, `xargs`, `find -exec`, `git`, an editor, Python's `subprocess`. scat checks `getpgrp() == getpid()`, one system call and no guessing.
+
+Other heuristics were rejected. The parent's command line in `/proc/<ppid>/cmdline` (is it a shell, with or without a script argument?) breaks as soon as something sits between the shell and scat: `sudo`, a wrapper script, an editor's terminal, `script`; and every shell spells "interactive" differently. `$PS1` is not exported, so scat never sees it.
+
+What this means in practice:
+
+| Started as | Pages long output (`auto`) |
+|---|---|
+| `scat big.log` at a prompt (also through an alias or a shell function) | yes |
+| `exec scat big.log`, `ssh -t host scat big.log` | yes (scat replaces the group leader) |
+| a line in `./script.sh`, `bash -c 'scat a; scat b'`, a Makefile, `xargs`, `find -exec` | no, prints like cat |
+| `sudo scat big.log` | depends on sudo: with `use_pty` (the default since sudo 1.9.14) the command leads its own group and pages; without it, it prints |
+| `scat big.log < input` | no: standard input is not the terminal |
+| `scat big.log &` | no: background job |
+
+`--diagnose` shows the three facts and whether `auto` would page.
+
+### `always`
+
+`--paging always` (or `paging = "always"`, `SCAT_PAGING=always`) is an explicit request, so it skips the standard input and process group checks: less reads its keys from `/dev/tty`, not from standard input, and works fine from a script. It still needs standard output to be the terminal, scat to be in the foreground, and text-like files. Note that `paging = "always"` in the config therefore also pages inside scripts.
+
+scat decides from the file list before it prints anything, by sniffing the first 8 KiB of each file. In `auto` mode the output is held back until it would fill the screen. Short output is written directly and no pager starts. That is why `auto` is the default: nothing changes for `scat small.txt`, and the pager only appears when you need it. With `always`, the pager starts for any output.
 
 ## Settings
 

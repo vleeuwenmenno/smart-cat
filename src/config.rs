@@ -210,6 +210,16 @@ pub struct Config {
     pub pdf: PdfConfig,
     pub archive: ArchiveConfig,
     pub office: OfficeConfig,
+    pub cat_mode: CatModeConfig,
+}
+
+/// Behaviour when scat is started under the name `cat` (a `cat -> scat` symlink).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CatModeConfig {
+    /// Render on a terminal as `scat` does. Off by default: invoked as `cat`, scat
+    /// behaves exactly like GNU cat (no rendering, paging, listing or terminal query).
+    pub render: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -595,17 +605,17 @@ pub fn load(explicit: Option<&Path>, disabled: bool) -> Loaded {
 
 pub fn init(explicit: Option<&Path>) -> i32 {
     let Some(path) = explicit.map(Path::to_path_buf).or_else(default_path) else {
-        eprintln!("scat: cannot find a config location: HOME is not set");
+        crate::report!("cannot find a config location: HOME is not set");
         return 1;
     };
     if path.exists() {
-        eprintln!("scat: {} already exists; not overwriting", shown(&path));
+        crate::report!("{} already exists; not overwriting", shown(&path));
         return 1;
     }
     if let Some(parent) = path.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
     {
-        eprintln!("scat: {}: {}", shown(parent), crate::util::io_message(&err));
+        crate::report!("{}: {}", shown(parent), crate::util::io_message(&err));
         return 1;
     }
     match std::fs::write(&path, TEMPLATE) {
@@ -614,7 +624,7 @@ pub fn init(explicit: Option<&Path>) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!("scat: {}: {}", shown(&path), crate::util::io_message(&err));
+            crate::report!("{}: {}", shown(&path), crate::util::io_message(&err));
             1
         }
     }
@@ -627,7 +637,7 @@ pub fn print(config: &Config) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!("scat: cannot serialize config: {err}");
+            crate::report!("cannot serialize config: {err}");
             1
         }
     }
@@ -718,6 +728,15 @@ mod tests {
         assert!(!config.list.cache);
         assert!(config.list.thumbnails);
         assert_eq!(Config::default().list.style, ListStyle::Auto);
+    }
+
+    #[test]
+    fn cat_mode_is_strict_by_default() {
+        assert!(!Config::default().cat_mode.render);
+        let config: Config = toml::from_str("[cat_mode]\nrender = true").unwrap();
+        assert!(config.cat_mode.render);
+        let template: Config = toml::from_str(TEMPLATE).unwrap();
+        assert!(!template.cat_mode.render);
     }
 
     #[test]

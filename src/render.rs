@@ -33,10 +33,25 @@ use crate::video;
 const MAX_RENDER_LINE: usize = 1024 * 1024;
 const RESET: &[u8] = b"\x1b[0m";
 
-pub fn run(cli: &Cli, config: &Config) -> i32 {
+/// Prints the files. `strict` (invoked as `cat` without `[cat_mode] render = true`)
+/// means no rendering on a terminal either, unless `--force-render` asks for it, and
+/// never a pager, a directory listing or a listing for no arguments.
+pub fn run(cli: &Cli, config: &Config, strict: bool) -> i32 {
+    let strict_config;
+    let config = if strict {
+        let mut cat = config.clone();
+        cat.defaults.paging = PagingMode::Never;
+        cat.defaults.no_args = crate::config::NoArgs::Stdin;
+        cat.defaults.directories = Directories::Error;
+        strict_config = cat;
+        &strict_config
+    } else {
+        config
+    };
     let stdout = io::stdout();
     let stdout_tty = stdout.is_terminal();
-    let render = !cli.raw && (stdout_tty || cli.force_render) && !cli.wants_cat_visualisation();
+    let render =
+        !cli.raw && (cli.force_render || (stdout_tty && !strict)) && !cli.wants_cat_visualisation();
     let out_identity = input::stdout_identity();
 
     let mut ctx = Context::new(cli, config, stdout_tty);
@@ -58,17 +73,17 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
         render && stdout_tty && sources.len() > 1 && !cli.plain && config.defaults.headers;
 
     // Decide on paging up front: only when every file is text-like (no graphics, no media).
-    let mode = cli.paging.unwrap_or(config.defaults.paging);
-    let decision = pager::decide(
-        mode,
-        stdout_tty,
-        render,
-        mode != PagingMode::Never
-            && stdout_tty
-            && render
-            && term::in_foreground(&stdout)
-            && all_pageable(&sources, &mut ctx),
-    );
+    let mode = if strict {
+        PagingMode::Never
+    } else {
+        cli.paging.unwrap_or(config.defaults.paging)
+    };
+    let terminal = if render && mode != PagingMode::Never {
+        pager::Terminal::detect()
+    } else {
+        pager::Terminal::default()
+    };
+    let decision = pager::decide(mode, &terminal, render, || all_pageable(&sources, &mut ctx));
     let mut output = pager::Output::new(stdout.lock(), pager::plan(decision));
     let paged = output.is_paged();
     let status = {
@@ -78,7 +93,7 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
     match output.finish() {
         Err(err) if paged && err.kind() == io::ErrorKind::BrokenPipe => status,
         Err(err) => {
-            eprintln!("scat: write error: {}", io_message(&err));
+            crate::report!("write error: {}", io_message(&err));
             1
         }
         Ok(()) => status,
@@ -107,11 +122,11 @@ fn process_all<W: Write>(
                 if pager_quit(paged, &err) {
                     return 0;
                 }
-                eprintln!("scat: write error: {}", io_message(&err));
+                crate::report!("write error: {}", io_message(&err));
                 return 1;
             }
             let _ = out.flush();
-            eprintln!("scat: {}: {}", source.display_name(), io_message(&err));
+            crate::report!("{}: {}", source.display_name(), io_message(&err));
             status = 1;
         }
     }
@@ -119,7 +134,7 @@ fn process_all<W: Write>(
         if pager_quit(paged, &err) {
             return 0;
         }
-        eprintln!("scat: write error: {}", io_message(&err));
+        crate::report!("write error: {}", io_message(&err));
         return 1;
     }
     status
@@ -373,8 +388,8 @@ fn process<W: Write>(
     };
     if truncated.is_some_and(|hit| hit.get()) {
         out.flush()?;
-        eprintln!(
-            "scat: {}: decompressed output stopped at {} (max_decompressed_bytes)",
+        crate::report!(
+            "{}: decompressed output stopped at {} (max_decompressed_bytes)",
             source.display_name(),
             human_size(ctx.config.defaults.max_decompressed_bytes)
         );
@@ -474,8 +489,8 @@ fn render_video<W: Write>(
 ) -> io::Result<()> {
     let (Source::Path(path), InputKind::Regular { size }) = (source, input.kind) else {
         out.flush()?;
-        eprintln!(
-            "scat: {}: video info needs a file (use --raw for bytes)",
+        crate::report!(
+            "{}: video info needs a file (use --raw for bytes)",
             source.display_name()
         );
         return Ok(());
@@ -636,7 +651,7 @@ fn render_markdown<W: Write>(
     }
     let text = String::from_utf8_lossy(&data);
 
-    let opts = markdown_options(ctx, settings);
+    let opts = markdown_options(ctx, settings, &text);
     // Both callbacks need the context; they never run at the same time.
     let ctx = std::cell::RefCell::new(ctx);
     let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
@@ -688,8 +703,13 @@ fn render_markdown<W: Write>(
     out.write_all(&rendered)
 }
 
-fn markdown_options(ctx: &mut Context, settings: &FileSettings) -> markdown::Options {
-    let light = ctx.colors && ctx.depth != ColorDepth::Ansi16 && ctx.background_is_light();
+/// Only inline code uses the light/dark palette; code blocks ask for a theme
+/// themselves. Documents without backticks never need the terminal's background.
+fn markdown_options(ctx: &mut Context, settings: &FileSettings, text: &str) -> markdown::Options {
+    let light = ctx.colors
+        && ctx.depth != ColorDepth::Ansi16
+        && text.contains('`')
+        && ctx.markdown_light(settings);
     markdown::Options {
         width: markdown::render_width(ctx.stdout_tty),
         colors: ctx.colors,
@@ -733,7 +753,7 @@ fn render_document<W: Write>(
         ctx.colors,
         ctx.cli.plain,
     )?;
-    let opts = markdown_options(ctx, settings);
+    let opts = markdown_options(ctx, settings, &converted.markdown);
     let rendered = markdown::render(&converted.markdown, &opts, &mut |_, _| None);
     out.write_all(&rendered)
 }
@@ -837,14 +857,7 @@ impl<'a> Context<'a> {
 
     fn capabilities(&mut self) -> Option<&query::Capabilities> {
         if self.caps.is_none() {
-            let caps = if self.stdout_tty && !term::is_basic_terminal() {
-                query::query(query::DEFAULT_TIMEOUT)
-                    .ok()
-                    .filter(|c| c.answered)
-            } else {
-                None
-            };
-            self.caps = Some(caps);
+            self.caps = Some(term::capabilities(self.stdout_tty));
         }
         self.caps.as_ref().and_then(Option::as_ref)
     }
@@ -886,8 +899,30 @@ impl<'a> Context<'a> {
             .is_some_and(|bg| bg == 7 || bg == 15)
     }
 
+    /// The theme set by `--theme`, `SCAT_THEME`, a rule or `[defaults] theme`.
+    fn fixed_theme(&self, settings: &FileSettings) -> Option<String> {
+        self.cli.theme.clone().or_else(|| settings.theme.clone())
+    }
+
+    /// Whether markdown's inline code gets the light palette. With a fixed theme this
+    /// follows the theme's own background, so no terminal query is needed.
+    fn markdown_light(&mut self, settings: &FileSettings) -> bool {
+        let Some(name) = self.fixed_theme(settings) else {
+            return self.background_is_light();
+        };
+        let assets = self.assets.get_or_insert_with(Assets::load);
+        assets
+            .theme(&name)
+            .and_then(|theme| theme.settings.background)
+            .is_some_and(|c| {
+                0.2126 * f64::from(c.r) + 0.7152 * f64::from(c.g) + 0.0722 * f64::from(c.b) > 128.0
+            })
+    }
+
+    /// The highlighting theme. Asks the terminal for its background only when no theme
+    /// is fixed and the colour depth allows more than the 16-colour `ansi` theme.
     fn theme_name(&mut self, settings: &FileSettings) -> String {
-        if let Some(theme) = self.cli.theme.clone().or_else(|| settings.theme.clone()) {
+        if let Some(theme) = self.fixed_theme(settings) {
             return theme;
         }
         if self.depth == ColorDepth::Ansi16 {
@@ -1018,31 +1053,38 @@ fn render_text<W: Write>(
         .text_kind
         .filter(|_| ctx.colors)
         .map(linestyle::Styler::new);
+    // An empty file has nothing to highlight.
     let want_highlight = ctx.colors
         && settings.renderer != Renderer::Text
         && small_enough
-        && ctx.text_kind.is_none();
-    let theme_name = if want_highlight {
-        Some(ctx.theme_name(settings))
-    } else {
-        None
-    };
+        && ctx.text_kind.is_none()
+        && !head.is_empty();
     if want_highlight && ctx.assets.is_none() {
         ctx.assets = Some(Assets::load());
     }
+    let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
+    let first_line = format!("{first_line}\n");
+    let language = cli.language.as_deref().or(settings.language.as_deref());
+    // The theme (and with it the terminal query for the background) is only needed
+    // once a syntax is found: plain text is never highlighted.
+    let has_syntax = want_highlight
+        && ctx
+            .assets
+            .as_ref()
+            .is_some_and(|a| a.find_syntax(language, file_name, &first_line).is_some());
+    if want_highlight
+        && !has_syntax
+        && let Some(language) = language
+    {
+        crate::report!("unknown language '{language}'; see --list-languages");
+    }
+    let theme_name = has_syntax.then(|| ctx.theme_name(settings));
     let mut highlighter = None;
     if let (Some(assets), Some(theme_name)) = (ctx.assets.as_ref(), theme_name) {
-        let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
-        let language = cli.language.as_deref().or(settings.language.as_deref());
-        let syntax = assets.find_syntax(language, file_name, &format!("{first_line}\n"));
-        if syntax.is_none()
-            && let Some(language) = language
-        {
-            eprintln!("scat: unknown language '{language}'; see --list-languages");
-        }
+        let syntax = assets.find_syntax(language, file_name, &first_line);
         let theme = assets.theme(&theme_name).or_else(|| {
             if !ctx.warned_theme {
-                eprintln!("scat: unknown theme '{theme_name}'; see --list-themes");
+                crate::report!("unknown theme '{theme_name}'; see --list-themes");
                 ctx.warned_theme = true;
             }
             assets.theme(&ctx.config.defaults.theme_dark)

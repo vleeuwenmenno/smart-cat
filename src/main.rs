@@ -83,8 +83,8 @@ fn usage_error(err: clap::Error) -> ! {
             first.strip_prefix("error: ").unwrap_or(first).to_string()
         }
     };
-    eprintln!("scat: {}", render::sanitize_str(&message));
-    eprintln!("Try 'scat --help' for more information.");
+    crate::report!("{}", render::sanitize_str(&message));
+    eprintln!("Try '{} --help' for more information.", util::prog_name());
     std::process::exit(1);
 }
 
@@ -106,7 +106,7 @@ fn run(cli: &Cli) -> i32 {
     }
     let loaded = config::load(cli.config.as_deref(), cli.no_config);
     for warning in &loaded.warnings {
-        eprintln!("scat: {warning}");
+        crate::report!("{warning}");
     }
     let config = &loaded.config;
 
@@ -131,5 +131,6 @@ fn run(cli: &Cli) -> i32 {
     if cli.play {
         return play::run(cli);
     }
-    render::run(cli, config)
+    let strict = util::invoked_as_cat() && !config.cat_mode.render;
+    render::run(cli, config, strict)
 }
