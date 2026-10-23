@@ -123,6 +123,7 @@ pub fn renderer_is_pageable(
         Renderer::Code
         | Renderer::Text
         | Renderer::Markdown
+        | Renderer::Notebook
         | Renderer::Hex
         | Renderer::Binary
         | Renderer::Archive

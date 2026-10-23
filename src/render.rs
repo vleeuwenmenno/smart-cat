@@ -22,6 +22,7 @@ use crate::json;
 use crate::linestyle;
 use crate::listing;
 use crate::markdown;
+use crate::notebook;
 use crate::office;
 use crate::pager;
 use crate::table;
@@ -196,6 +197,15 @@ fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     if as_markdown && markdown_has_images(path) {
         return false;
     }
+    // Notebooks draw image outputs; the same holds for a pager.
+    let as_notebook = match settings.renderer {
+        Renderer::Notebook => true,
+        Renderer::Auto => notebook::is_notebook(file_name.as_deref(), language),
+        _ => false,
+    };
+    if as_notebook && notebook_has_images(path) {
+        return false;
+    }
     pager::renderer_is_pageable(
         settings.renderer,
         &detected.kind,
@@ -210,6 +220,15 @@ fn markdown_has_images(path: &std::path::Path) -> bool {
     let mut text = Vec::new();
     let read = std::fs::File::open(path).and_then(|f| f.take(4 << 20).read_to_end(&mut text));
     read.is_err() || text.windows(2).any(|w| w == b"![")
+}
+
+/// Whether a notebook may draw images (an image output or attachment), read up to
+/// the notebook size limit.
+fn notebook_has_images(path: &std::path::Path) -> bool {
+    let mut data = Vec::new();
+    let read = std::fs::File::open(path)
+        .and_then(|f| f.take(notebook::MAX_BYTES + 1).read_to_end(&mut data));
+    read.is_err() || notebook::may_draw_images(&data)
 }
 
 /// The rule before a file when several are rendered, with a blank line between files.
@@ -384,6 +403,12 @@ fn process<W: Write>(
         }
         Renderer::Hex => render_hex(&mut input, out, ctx),
         Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
+        Renderer::Notebook => {
+            render_notebook(&mut input, out, ctx, &settings, file_name.as_deref())
+        }
+        Renderer::Auto if notebook::is_notebook(file_name.as_deref(), language) => {
+            render_notebook(&mut input, out, ctx, &settings, file_name.as_deref())
+        }
         _ if as_markdown => {
             let doc = (&settings, file_name.as_deref(), source);
             render_markdown(&mut input, out, ctx, doc, &head)
@@ -659,38 +684,7 @@ fn render_markdown<W: Write>(
     // Both callbacks need the context; they never run at the same time.
     let ctx = std::cell::RefCell::new(ctx);
     let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
-        let mut guard = ctx.borrow_mut();
-        let ctx: &mut Context = &mut guard;
-        let theme_name = ctx.theme_name(settings);
-        let assets = ctx.assets.get_or_insert_with(Assets::load);
-        let syntax = assets.find_syntax(Some(lang), None, "")?;
-        let theme = assets
-            .theme(&theme_name)
-            .or_else(|| assets.theme(&ctx.config.defaults.theme_dark))?;
-        let mut highlighter = HighlightLines::new(syntax, theme);
-        let mut lines = Vec::new();
-        for line in syntect::util::LinesWithEndings::from(code) {
-            let regions = highlighter.highlight_line(line, &assets.syntaxes).ok()?;
-            let mut encoded = Vec::with_capacity(line.len() * 2);
-            let mut column = 0;
-            for (style, piece) in regions {
-                let piece = piece.trim_end_matches(['\n', '\r']);
-                if piece.is_empty() {
-                    continue;
-                }
-                encoded.extend_from_slice(highlight::style_sgr(style, ctx.depth).as_bytes());
-                sanitize(
-                    &mut encoded,
-                    piece.as_bytes(),
-                    SgrMode::Escape,
-                    settings.tab_width,
-                    &mut column,
-                );
-            }
-            encoded.extend_from_slice(RESET);
-            lines.push(encoded);
-        }
-        Some(lines)
+        highlight_block(&mut ctx.borrow_mut(), settings, lang, code)
     };
     // Image paths are relative to the document's directory; standard input has none,
     // so its images keep their placeholders.
@@ -705,6 +699,144 @@ fn render_markdown<W: Write>(
     };
     let rendered = markdown::render_with_images(&text, &opts, &mut highlight, &mut images);
     out.write_all(&rendered)
+}
+
+/// Highlights a code block with the theme of `settings`: one encoded line per source
+/// line, without newlines. `None` when the language or theme is unknown.
+fn highlight_block(
+    ctx: &mut Context,
+    settings: &FileSettings,
+    lang: &str,
+    code: &str,
+) -> Option<Vec<Vec<u8>>> {
+    let theme_name = ctx.theme_name(settings);
+    let assets = ctx.assets.get_or_insert_with(Assets::load);
+    let syntax = assets.find_syntax(Some(lang), None, "")?;
+    let theme = assets
+        .theme(&theme_name)
+        .or_else(|| assets.theme(&ctx.config.defaults.theme_dark))?;
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let mut lines = Vec::new();
+    for line in syntect::util::LinesWithEndings::from(code) {
+        let regions = highlighter.highlight_line(line, &assets.syntaxes).ok()?;
+        let mut encoded = Vec::with_capacity(line.len() * 2);
+        let mut column = 0;
+        for (style, piece) in regions {
+            let piece = piece.trim_end_matches(['\n', '\r']);
+            if piece.is_empty() {
+                continue;
+            }
+            encoded.extend_from_slice(highlight::style_sgr(style, ctx.depth).as_bytes());
+            sanitize(
+                &mut encoded,
+                piece.as_bytes(),
+                SgrMode::Escape,
+                settings.tab_width,
+                &mut column,
+            );
+        }
+        encoded.extend_from_slice(RESET);
+        lines.push(encoded);
+    }
+    Some(lines)
+}
+
+/// Jupyter notebooks: cells in order with their outputs. Notebooks over the size limit
+/// and files that are not nbformat 4 fall back to the highlighted JSON view.
+fn render_notebook<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+) -> io::Result<()> {
+    let mut data = Vec::new();
+    (&mut input.reader)
+        .take(notebook::MAX_BYTES + 1)
+        .read_to_end(&mut data)?;
+    let name = file_name.unwrap_or("-").to_string();
+    let parsed = if data.len() as u64 > notebook::MAX_BYTES {
+        Err(format!("larger than {}", human_size(notebook::MAX_BYTES)))
+    } else {
+        notebook::parse(&data)
+    };
+    let nb = match parsed {
+        Ok(nb) => nb,
+        Err(reason) => {
+            crate::report!("{name}: not a readable notebook ({reason}); showing JSON");
+            let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+            input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+            let head = sniff(input)?;
+            return render_text(input, out, ctx, settings, Some("notebook.json"), &head);
+        }
+    };
+    let has_code_spans = data.contains(&b'`');
+    drop(data);
+
+    let sgr_mode = match (ctx.config.defaults.ansi, ctx.colors) {
+        (AnsiMode::Escape, _) => SgrMode::Escape,
+        (AnsiMode::KeepSgr, true) => SgrMode::Keep,
+        (AnsiMode::KeepSgr, false) => SgrMode::Strip,
+    };
+    let opts = notebook::Options {
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        width: markdown::render_width(ctx.stdout_tty),
+        tab_width: settings.tab_width,
+        plain: ctx.cli.plain,
+    };
+    let md_opts = markdown_options(ctx, settings, if has_code_spans { "`" } else { "" });
+    let tab_width = settings.tab_width;
+    let ctx = std::cell::RefCell::new(ctx);
+    let mut markdown_hook = |text: &str, images: notebook::MarkdownImages| -> Vec<u8> {
+        let mut highlight =
+            |lang: &str, code: &str| highlight_block(&mut ctx.borrow_mut(), settings, lang, code);
+        markdown::render_with_images(text, &md_opts, &mut highlight, images)
+    };
+    let mut highlight =
+        |lang: &str, code: &str| highlight_block(&mut ctx.borrow_mut(), settings, lang, code);
+    let mut image = |data: Vec<u8>, svg: bool, cols: u16| {
+        let screen = ctx.borrow_mut().image_screen();
+        notebook_image(&screen, data, svg, cols)
+    };
+    let mut clean = |line: &str| {
+        let mut encoded = Vec::with_capacity(line.len());
+        let mut column = 0;
+        sanitize(
+            &mut encoded,
+            line.as_bytes(),
+            sgr_mode,
+            tab_width,
+            &mut column,
+        );
+        encoded
+    };
+    let mut hooks = notebook::Hooks {
+        markdown: &mut markdown_hook,
+        highlight: &mut highlight,
+        image: &mut image,
+        clean: &mut clean,
+    };
+    out.write_all(&notebook::render(&nb, &opts, &mut hooks))
+}
+
+/// Draws a notebook image output with kitty, sixel or blocks. ASCII output and
+/// decoding errors keep the placeholder.
+fn notebook_image(
+    screen: &crate::image::Screen,
+    data: Vec<u8>,
+    svg: bool,
+    max_cols: u16,
+) -> Option<crate::image::Drawn> {
+    if screen.method == crate::image::Method::Ascii {
+        return None;
+    }
+    let opts = crate::image::ShowOptions {
+        max_cols: Some(max_cols),
+        max_rows: Some(notebook::IMAGE_ROWS),
+        ..Default::default()
+    };
+    crate::image::draw_encoded(screen, data, svg, &opts).ok()
 }
 
 /// Only inline code uses the light/dark palette; code blocks ask for a theme

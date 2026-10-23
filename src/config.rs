@@ -57,6 +57,8 @@ pub enum Renderer {
     Certificate,
     /// SQLite database: header facts, tables, schemas and sample rows.
     Database,
+    /// Jupyter notebook: cells, outputs and inline images.
+    Notebook,
 }
 
 impl fmt::Display for Renderer {
@@ -69,6 +71,7 @@ impl fmt::Display for Renderer {
             Renderer::Video => "video",
             Renderer::Audio => "audio",
             Renderer::Markdown => "markdown",
+            Renderer::Notebook => "notebook",
             Renderer::Image => "image",
             Renderer::Table => "table",
             Renderer::Hex => "hex",

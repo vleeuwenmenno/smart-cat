@@ -28,6 +28,7 @@ Background and library choices are in [research.md](research.md).
 - **M4, format pack** (partial)
   - [office documents](office-documents.md): docx, odt, pptx, odp, xlsx, xls, ods as markdown, with slide and sheet sections
   - [SQLite databases](sqlite.md): header, tables with row counts, schemas, indexes and sample rows, opened read-only and immutable
+  - [Jupyter notebooks](notebooks.md): markdown and code cells, text, error and image outputs
   - CSV/TSV/PSV tables and minified JSON pretty-printing ([data-files.md](data-files.md))
   - transparent `.gz/.xz/.zst/.bz2` decompression ([compressed-files.md](compressed-files.md))
   - diff and log colouring ([diffs-and-logs.md](diffs-and-logs.md))
@@ -46,6 +47,6 @@ Background and library choices are in [research.md](research.md).
 |---|---|
 | M2, images (rest) | kitty Unicode placeholders for tmux; octants; iTerm2 inline images |
 | M3, documents and media (rest) | landlock/seccomp for the PDF helper |
-| M4, format pack (rest) | SQLite, notebooks, PGP keys |
+| M4, format pack (rest) | PGP keys |
 
 The full list of formats under consideration is in [research.md §8](research.md#8-file-format-index).

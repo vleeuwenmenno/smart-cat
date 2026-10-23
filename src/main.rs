@@ -20,6 +20,7 @@ mod kv;
 mod linestyle;
 mod listing;
 mod markdown;
+mod notebook;
 mod office;
 mod pager;
 mod pdf;
