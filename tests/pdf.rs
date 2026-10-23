@@ -56,7 +56,14 @@ fn make_pdf(title: &str, pages: &[&str]) -> Vec<u8> {
     pdf
 }
 
+/// Written once per test binary: tests run in parallel and must not rewrite files
+/// another test is reading.
 fn fixtures() -> PathBuf {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(make_fixtures).clone()
+}
+
+fn make_fixtures() -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("pdf");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
