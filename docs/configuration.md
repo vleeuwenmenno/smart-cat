@@ -28,6 +28,7 @@ Command line flags, then `SCAT_*` environment variables, then matching `[[rule]]
 | `tab_width` | `4` | tab expansion when rendering; `0` keeps tabs |
 | `ansi` | `"keep-sgr"` | escape sequences in files: `"keep-sgr"` keeps colours, `"escape"` shows them as `^[` |
 | `max_highlight_bytes` | `16777216` | larger files are not highlighted |
+| `max_decompressed_bytes` | `1073741824` | [decompression](compressed-files.md) stops after this many bytes |
 | `no_args` | `"list"` | `scat` with no arguments, run from a terminal: `"list"` lists the current directory, `"stdin"` reads stdin like cat |
 | `directories` | `"list"` | directory arguments when rendering: `"list"` or `"error"` (cat's `Is a directory`) |
 
@@ -88,7 +89,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"raw"` (exactly cat) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |

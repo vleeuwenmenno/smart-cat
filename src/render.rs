@@ -8,9 +8,11 @@ use crate::audio;
 use crate::cat::{self, CatOptions, CatState};
 use crate::cli::Cli;
 use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, Renderer};
+use crate::decompress;
 use crate::detect::{self, Kind, SNIFF_BYTES};
 use crate::highlight::{self, Assets};
 use crate::input::{self, Input, InputKind, Source};
+use crate::linestyle;
 use crate::listing;
 use crate::markdown;
 use crate::term::{self, ColorDepth, query};
@@ -96,13 +98,42 @@ fn process<W: Write>(
         return write_cat(&mut input, out, &ctx.cat_options, cat_state);
     }
 
-    let head = input.reader.fill_buf()?;
-    let head = head[..head.len().min(SNIFF_BYTES)].to_vec();
-    let detected = detect::detect(&head);
-    let file_name = source.file_name();
-    let settings = ctx
+    let mut head = sniff(&mut input)?;
+    let mut detected = detect::detect(&head);
+    let mut file_name = source.file_name();
+    let mut settings = ctx
         .config
         .settings_for(file_name.as_deref(), &detected.mime);
+
+    // Single-stream .gz/.xz/.zst/.bz2: decode, then treat the inside like any file.
+    let mut truncated = None;
+    if settings.renderer != Renderer::Raw
+        && let Some(format) = decompress::detect(&head)
+        && !decompress::is_tarball(file_name.as_deref(), &head, format)
+    {
+        let outer = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+        let (reader, hit) = decompress::open(
+            format,
+            Box::new(outer),
+            ctx.config.defaults.max_decompressed_bytes,
+        )?;
+        input.reader = BufReader::with_capacity(64 * 1024, reader);
+        input.kind = InputKind::Stream;
+        input.identity = None;
+        truncated = Some(hit);
+        file_name = file_name.map(|name| decompress::inner_name(&name));
+        head = sniff(&mut input)?;
+        detected = detect::detect(&head);
+        settings = ctx
+            .config
+            .settings_for(file_name.as_deref(), &detected.mime);
+    }
+    ctx.text_kind = text_kind(
+        settings.renderer,
+        ctx.cli.language.as_deref().or(settings.language.as_deref()),
+        file_name.as_deref(),
+        &head,
+    );
 
     let is_video = settings.renderer == Renderer::Auto && detected.mime.starts_with("video/");
     let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
@@ -112,7 +143,7 @@ fn process<W: Write>(
         _ => false,
     };
 
-    match settings.renderer {
+    let result = match settings.renderer {
         Renderer::Video => render_video(source, &input, out, ctx, &detected.mime),
         Renderer::Auto if is_video => render_video(source, &input, out, ctx, &detected.mime),
         Renderer::Raw => write_cat(&mut input, out, &ctx.cat_options, cat_state),
@@ -153,7 +184,62 @@ fn process<W: Write>(
             render_markdown(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
         }
         _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
+    };
+    if truncated.is_some_and(|hit| hit.get()) {
+        out.flush()?;
+        eprintln!(
+            "scat: {}: decompressed output stopped at {} (max_decompressed_bytes)",
+            source.display_name(),
+            human_size(ctx.config.defaults.max_decompressed_bytes)
+        );
     }
+    result
+}
+
+/// The first bytes of the input for type detection, left unconsumed in the reader.
+fn sniff(input: &mut Input) -> io::Result<Vec<u8>> {
+    let head = input.reader.fill_buf()?;
+    Ok(head[..head.len().min(SNIFF_BYTES)].to_vec())
+}
+
+/// Whether a text file gets diff or log colouring: forced by the renderer setting or
+/// `-l diff|patch|log`, by extension, or (diffs, and logs without a known extension)
+/// by what the first lines look like.
+pub fn text_kind(
+    renderer: Renderer,
+    language: Option<&str>,
+    file_name: Option<&str>,
+    head: &[u8],
+) -> Option<linestyle::Kind> {
+    use linestyle::Kind;
+    match renderer {
+        Renderer::Diff => return Some(Kind::Diff),
+        Renderer::Log => return Some(Kind::Log),
+        Renderer::Auto => {}
+        _ => return None,
+    }
+    let ext = file_name
+        .and_then(|n| n.rsplit_once('.'))
+        .map(|(_, e)| e.to_ascii_lowercase());
+    let named = language
+        .map(str::to_ascii_lowercase)
+        .or(ext.clone())
+        .unwrap_or_default();
+    match named.as_str() {
+        "diff" | "patch" => return Some(Kind::Diff),
+        "log" => return Some(Kind::Log),
+        _ => {}
+    }
+    if language.is_some() || markdown::is_markdown(file_name, language) {
+        return None;
+    }
+    if linestyle::looks_like_diff(head) {
+        return Some(Kind::Diff);
+    }
+    let unnamed = ext
+        .as_deref()
+        .is_none_or(|e| matches!(e, "txt" | "out" | "err"));
+    (unnamed && linestyle::looks_like_log(head)).then_some(Kind::Log)
 }
 
 /// Video info view. ffprobe opens the file by path, so standard input and pipes only
@@ -310,6 +396,8 @@ struct Context<'a> {
     /// Directory arguments being listed, and how many are done: headers for several.
     dir_args: usize,
     listed: usize,
+    /// Diff or log colouring for the file being rendered.
+    text_kind: Option<linestyle::Kind>,
 }
 
 impl<'a> Context<'a> {
@@ -329,6 +417,7 @@ impl<'a> Context<'a> {
             warned_theme: false,
             dir_args: 0,
             listed: 0,
+            text_kind: None,
         }
     }
 
@@ -450,7 +539,14 @@ fn render_text<W: Write>(
         (AnsiMode::KeepSgr, false) => SgrMode::Strip,
     };
 
-    let want_highlight = ctx.colors && settings.renderer != Renderer::Text && small_enough;
+    let mut styler = ctx
+        .text_kind
+        .filter(|_| ctx.colors)
+        .map(linestyle::Styler::new);
+    let want_highlight = ctx.colors
+        && settings.renderer != Renderer::Text
+        && small_enough
+        && ctx.text_kind.is_none();
     let theme_name = if want_highlight {
         Some(ctx.theme_name(settings))
     } else {
@@ -563,6 +659,28 @@ fn render_text<W: Write>(
                 }
                 Err(_) => highlighter = None,
             }
+        }
+        if !highlighted
+            && at_line_start
+            && !text.contains('\x1b')
+            && let Some(styler) = styler.as_mut()
+        {
+            let body = text.strip_suffix('\n').unwrap_or(&text);
+            let body = body.strip_suffix('\r').unwrap_or(body);
+            for (range, sgr) in styler.spans(body) {
+                encoded.extend_from_slice(sgr.as_bytes());
+                sanitize(
+                    &mut encoded,
+                    &body.as_bytes()[range],
+                    SgrMode::Escape,
+                    tab_width,
+                    &mut column,
+                );
+                if !sgr.is_empty() {
+                    encoded.extend_from_slice(RESET);
+                }
+            }
+            highlighted = true;
         }
         if !highlighted {
             let body = text.strip_suffix('\n').unwrap_or(&text);

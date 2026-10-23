@@ -29,6 +29,10 @@ ansi = "keep-sgr"
 # Files larger than this are shown without syntax highlighting.
 max_highlight_bytes = 16777216
 
+# .gz, .xz, .zst and .bz2 files are decompressed when rendering. Output stops after this
+# many decompressed bytes (a guard against decompression bombs).
+max_decompressed_bytes = 1073741824
+
 # `scat` with no arguments, run from a terminal, lists the current directory. Set "stdin"
 # to read standard input like cat instead.
 no_args = "list"
@@ -64,7 +68,8 @@ channel = "stable"
 #
 # renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
-#   "video" (info view), "raw" (exactly cat)
+#   "video" (info view), "diff" (coloured diff), "log" (coloured log levels),
+#   "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

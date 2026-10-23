@@ -39,6 +39,8 @@ Run `make check` before handing work back.
 | `src/config.rs` + `src/config_template.toml` | TOML config, rules, `--init-config` |
 | `src/image/` | image view: decoding (image crate, resvg), kitty/sixel/block/ASCII encoders, sizing, animation; `image::show` for other renderers |
 | `src/term/` | colour depth, env hints, and the batched `/dev/tty` capability query |
+| `src/decompress.rs` | gzip/xz/zstd/bzip2 stream decoders (pure Rust) with a size cap |
+| `src/linestyle.rs` | per-line diff and log colouring |
 | `src/diagnose.rs` | `--diagnose` report |
 | `src/update.rs` | `--update` / `--check-update` from GitHub releases |
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |

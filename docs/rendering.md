@@ -11,12 +11,14 @@ scat reads the first 8 KiB of each file to decide what it is:
 | markdown (`.md`, `.markdown`, `.mdown`, `.mkd`) | [rendered](markdown.md) |
 | text with a known language | [syntax highlighted](syntax-highlighting.md) |
 | other text | printed, with control characters made safe |
+| `.gz` `.xz` `.zst` `.bz2` | [decompressed](compressed-files.md), then the inside is detected again |
+| diffs, logs | [coloured](diffs-and-logs.md) |
 | audio (`audio/*`, plus `.wv .ape .mpc .spx .aac` by name) | [tag table and waveform](audio.md) |
 | binary | not printed; a note on stderr names the type and size (`--raw` prints it anyway) |
 
 Text means no NUL bytes and at most 5% invalid UTF-8, so Latin-1 files still count as text. The type comes from magic bytes (`infer`), for example `image/png` or `application/x-executable`.
 
-A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `markdown`, `audio`, `video` or `raw`.
+A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `markdown`, `audio`, `video`, `diff`, `log` or `raw`.
 
 ## Layout
 

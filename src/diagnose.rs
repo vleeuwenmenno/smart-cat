@@ -243,6 +243,30 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
         {
             "markdown (auto)".to_string()
         }
+        (Renderer::Auto, Kind::Text)
+            if crate::render::text_kind(
+                Renderer::Auto,
+                cli.language.as_deref().or(settings.language.as_deref()),
+                file_name.as_deref(),
+                &head,
+            )
+            .is_some() =>
+        {
+            format!(
+                "{} (auto)",
+                if crate::render::text_kind(
+                    Renderer::Auto,
+                    cli.language.as_deref().or(settings.language.as_deref()),
+                    file_name.as_deref(),
+                    &head,
+                ) == Some(crate::linestyle::Kind::Diff)
+                {
+                    "diff"
+                } else {
+                    "log"
+                }
+            )
+        }
         (Renderer::Auto, Kind::Text) => "code (auto)".to_string(),
         (other, _) => other.to_string(),
     };
