@@ -13,6 +13,7 @@
 | [video.md](video.md) | video info view: streams, duration, ffprobe dependency |
 | [pdf.md](pdf.md) | PDF documents: info header, pages as images, `--pages`, `--text`, the parser sandbox |
 | [binaries.md](binaries.md) | executables, libraries and wasm: ELF, PE, Mach-O and `ar` summaries, security flags, fallbacks |
+| [archives.md](archives.md) | zip, tar, tarballs, deb, 7z: summary and file tree, caps, hostile names |
 | [compressed-files.md](compressed-files.md) | transparent `.gz` `.xz` `.zst` `.bz2`: inner type detection, tarballs, size cap |
 | [diffs-and-logs.md](diffs-and-logs.md) | coloured unified diffs and log files: levels, timestamps, streaming |
 | [images.md](images.md) | images in the terminal: kitty, sixel, block and ASCII output, sizing, animation, SVG |

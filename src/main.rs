@@ -1,3 +1,4 @@
+mod archive;
 mod audio;
 mod binary;
 mod cat;

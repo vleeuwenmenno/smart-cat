@@ -30,6 +30,7 @@ Background and library choices are in [research.md](research.md).
   - transparent `.gz/.xz/.zst/.bz2` decompression ([compressed-files.md](compressed-files.md))
   - diff and log colouring ([diffs-and-logs.md](diffs-and-logs.md))
   - [executable and library summaries](binaries.md): ELF, PE, Mach-O, WebAssembly and `ar` archives, above a short hex dump
+  - [archive listing](archives.md): zip, tar, tarballs, deb and 7z as a file tree with sizes and dates
 - **Output polish**
   - [paging](paging.md) through `less -RFX` (auto: only when output exceeds the screen), file headers for several files
   - [hex dump](rendering.md#hex-dump) for binary files
@@ -42,6 +43,6 @@ Background and library choices are in [research.md](research.md).
 |---|---|
 | M2, images (rest) | kitty Unicode placeholders for tmux; octants; iTerm2 inline images |
 | M3, documents and media (rest) | landlock/seccomp for the PDF helper |
-| M4, format pack (rest) | archives (tarball and zip listing), SQLite, notebooks, certificates, office documents |
+| M4, format pack (rest) | SQLite, notebooks, certificates, office documents |
 
 The full list of formats under consideration is in [research.md §8](research.md#8-file-format-index).

@@ -229,6 +229,7 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
     );
     let is_image = crate::image::wants(&detected.mime, file_name.as_deref(), &head);
     let is_pdf = crate::pdf::wants(&detected.mime, &head);
+    let is_archive = crate::archive::detect(&head, file_name.as_deref()).is_some();
     let renderer = match (settings.renderer, &detected.kind) {
         (Renderer::Auto, _) if is_pdf => "pdf (auto)".to_string(),
         (Renderer::Auto, _) if is_image => "image (auto)".to_string(),
@@ -236,6 +237,7 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
         (Renderer::Auto, _) if crate::render::is_audio(&detected, file_name.as_deref()) => {
             "audio (auto)".to_string()
         }
+        (Renderer::Auto, _) if is_archive => "archive (auto)".to_string(),
         (Renderer::Auto, Kind::Binary) if crate::binary::wants(&head) => {
             "binary (auto)".to_string()
         }
@@ -309,8 +311,9 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
                 | Renderer::Hex
                 | Renderer::Binary
                 | Renderer::Pdf
+                | Renderer::Archive
         )
-        && !(settings.renderer == Renderer::Auto && (is_image || is_pdf))
+        && !(settings.renderer == Renderer::Auto && (is_image || is_pdf || is_archive))
     {
         let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
         let language = cli.language.as_deref().or(settings.language.as_deref());

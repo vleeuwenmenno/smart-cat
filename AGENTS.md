@@ -40,6 +40,7 @@ Run `make check` before handing work back.
 | `src/header.rs` | file name rule printed before each file when several are rendered |
 | `src/hexdump.rs` | hex dump view for binary files |
 | `src/binary.rs` | executable/library summary (goblin for ELF/PE/Mach-O/ar, wasmparser) above a short hex dump |
+| `src/archive.rs` | archive listing: zip, tar and tarballs, deb, 7z; summary header and file tree |
 | `src/generate.rs` | `--completions` and `--man` (clap_complete, clap_mangen) |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
@@ -52,6 +53,7 @@ Run `make check` before handing work back.
 | `src/update.rs` | `--update` / `--check-update` from GitHub releases |
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
 | `tests/script_compat.rs` | shell idioms (`sh -c`, `bash -c`) run with GNU cat and scat: output, status, messages |
+| `tests/archive.rs` | archive views with zip, tar, tar.gz, 7z and deb fixtures built in the test |
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
 | `tests/binary.rs` | binary summaries: system binaries, a hand-built wasm module, hex fallback |
 | `tests/images.rs` | forced image output, captions, piped image bytes |
