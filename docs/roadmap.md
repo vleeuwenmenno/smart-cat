@@ -24,6 +24,7 @@ Background and library choices are in [research.md](research.md).
   - audio info view: tag table, properties, braille waveform and cover art ([audio.md](audio.md))
   - video info: poster frame via ffmpeg; container, duration, bitrate and stream details via ffprobe ([video.md](video.md))
   - `--play` hands audio and video to mpv
+  - [PDF](pdf.md): info header, pages drawn with hayro in a sandboxed child process (poppler fallback), `--pages`, text via `pdftotext`
 - **M4, format pack** (partial)
   - CSV/TSV/PSV tables and minified JSON pretty-printing ([data-files.md](data-files.md))
   - transparent `.gz/.xz/.zst/.bz2` decompression ([compressed-files.md](compressed-files.md))
@@ -39,7 +40,7 @@ Background and library choices are in [research.md](research.md).
 | Milestone | Scope |
 |---|---|
 | M2, images (rest) | kitty Unicode placeholders for tmux; octants; iTerm2 inline images |
-| M3, documents and media (rest) | PDF pages (hayro, with poppler as fallback) |
+| M3, documents and media (rest) | landlock/seccomp for the PDF helper |
 | M4, format pack (rest) | archives (tarball and zip listing), ELF, SQLite, notebooks, certificates, office documents |
 
 The full list of formats under consideration is in [research.md §8](research.md#8-file-format-index).

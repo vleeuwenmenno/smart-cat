@@ -63,6 +63,15 @@ See [directory-listing.md](directory-listing.md).
 |---|---|---|
 | `max_bytes` | `512` | leading bytes of a binary file shown as a [hex dump](rendering.md#hex-dump) (at least 16) |
 
+## `[pdf]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `pages` | `"1"` | pages shown when `--pages` is not given: `"1"`, `"1-3,7"`, `"4-"` or `"all"`; an invalid value makes the whole config fall back to defaults, with a warning |
+| `max_pages` | `20` | most pages drawn as images per file; text output is not limited |
+
+See [pdf.md](pdf.md).
+
 ## `[update]`
 
 | Key | Default | Meaning |
@@ -103,7 +112,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"raw"` (exactly cat; also keeps compressed files compressed) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |

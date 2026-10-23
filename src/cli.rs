@@ -134,6 +134,14 @@ pub struct Cli {
     #[arg(long, help_heading = "Rendering")]
     pub no_animate: bool,
 
+    /// PDF pages to show: 1, 1-3,7, 4- or all (default: [pdf] pages, usually 1)
+    #[arg(long, value_name = "SPEC", value_parser = crate::pdf::PageSpec::parse, help_heading = "Documents")]
+    pub pages: Option<crate::pdf::PageSpec>,
+
+    /// Show the text of PDF pages instead of drawing them
+    #[arg(long, help_heading = "Documents")]
+    pub text: bool,
+
     /// Use this config file instead of the default location
     #[arg(
         long,

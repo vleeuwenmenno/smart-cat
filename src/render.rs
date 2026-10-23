@@ -293,6 +293,10 @@ fn process<W: Write>(
             ctx.utf8,
             &mut || ctx.image_screen(),
         ),
+        Renderer::Pdf => render_pdf(&mut input, out, ctx, source),
+        Renderer::Auto if crate::pdf::wants(&detected.mime, &head) => {
+            render_pdf(&mut input, out, ctx, source)
+        }
         Renderer::Image => render_image(&mut input, out, ctx, source, &head),
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
@@ -746,6 +750,34 @@ fn render_image<W: Write>(
         caption: !ctx.cli.plain,
     };
     crate::image::view(input, out, &screen, &options)
+}
+
+/// PDF view. Pages are drawn as images on a terminal; their text is shown with
+/// `--text`, when only ASCII art is possible, and for `-f` into a pipe (unless
+/// `--protocol` asks for images).
+fn render_pdf<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    source: &Source,
+) -> io::Result<()> {
+    let want_images = !ctx.cli.text && (ctx.stdout_tty || ctx.cli.protocol.is_some());
+    let screen = if want_images {
+        Some(ctx.image_screen()).filter(|s| s.method != crate::image::Method::Ascii)
+    } else {
+        None
+    };
+    let name = source.display_name();
+    let opts = crate::pdf::Options {
+        name: &name,
+        pages: ctx.cli.pages.as_ref().unwrap_or(&ctx.config.pdf.pages),
+        max_pages: ctx.config.pdf.max_pages,
+        screen,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        plain: ctx.cli.plain,
+    };
+    crate::pdf::render(out, source, input, &opts)
 }
 
 fn render_text<W: Write>(

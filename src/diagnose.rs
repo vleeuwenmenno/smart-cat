@@ -228,7 +228,9 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
         }
     );
     let is_image = crate::image::wants(&detected.mime, file_name.as_deref(), &head);
+    let is_pdf = crate::pdf::wants(&detected.mime, &head);
     let renderer = match (settings.renderer, &detected.kind) {
+        (Renderer::Auto, _) if is_pdf => "pdf (auto)".to_string(),
         (Renderer::Auto, _) if is_image => "image (auto)".to_string(),
         (Renderer::Auto, _) if detected.mime.starts_with("video/") => "video (auto)".to_string(),
         (Renderer::Auto, _) if crate::render::is_audio(&detected, file_name.as_deref()) => {
@@ -280,12 +282,31 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
         (other, _) => other.to_string(),
     };
     println!("    renderer: {renderer}");
+    if renderer.starts_with("pdf") {
+        let tool = |name| {
+            if crate::util::which(name).is_some() {
+                "yes"
+            } else {
+                "no"
+            }
+        };
+        println!(
+            "    pdf: hayro (built in); pdftoppm: {}, pdftotext: {}",
+            tool("pdftoppm"),
+            tool("pdftotext")
+        );
+    }
     if detected.kind == Kind::Text
         && !matches!(
             settings.renderer,
-            Renderer::Raw | Renderer::Audio | Renderer::Image | Renderer::Table | Renderer::Hex
+            Renderer::Raw
+                | Renderer::Audio
+                | Renderer::Image
+                | Renderer::Table
+                | Renderer::Hex
+                | Renderer::Pdf
         )
-        && !(settings.renderer == Renderer::Auto && is_image)
+        && !(settings.renderer == Renderer::Auto && (is_image || is_pdf))
     {
         let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
         let language = cli.language.as_deref().or(settings.language.as_deref());

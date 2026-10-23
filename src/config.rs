@@ -44,6 +44,8 @@ pub enum Renderer {
     Diff,
     /// Coloured log levels and timestamps.
     Log,
+    /// PDF info header and pages as images or text.
+    Pdf,
 }
 
 impl fmt::Display for Renderer {
@@ -61,6 +63,7 @@ impl fmt::Display for Renderer {
             Renderer::Hex => "hex",
             Renderer::Diff => "diff",
             Renderer::Log => "log",
+            Renderer::Pdf => "pdf",
         })
     }
 }
@@ -170,6 +173,7 @@ pub struct Config {
     pub image: ImageConfig,
     pub table: TableConfig,
     pub hexdump: HexdumpConfig,
+    pub pdf: PdfConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -196,6 +200,24 @@ impl Default for HexdumpConfig {
     fn default() -> Self {
         Self {
             max_bytes: crate::hexdump::DEFAULT_MAX_BYTES,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PdfConfig {
+    /// Pages shown when `--pages` is not given.
+    pub pages: crate::pdf::PageSpec,
+    /// Most pages drawn as images per file.
+    pub max_pages: u32,
+}
+
+impl Default for PdfConfig {
+    fn default() -> Self {
+        Self {
+            pages: crate::pdf::PageSpec::default(),
+            max_pages: 20,
         }
     }
 }
@@ -555,6 +577,14 @@ mod tests {
         assert!(m.matches(Some("README.md"), "text/plain"));
         assert!(!m.matches(Some("md"), "text/plain"));
         assert!(!m.matches(None, "text/plain"));
+    }
+
+    #[test]
+    fn pdf_pages_are_validated() {
+        let config: Config = toml::from_str("[pdf]\npages = \"1-3,7\"").unwrap();
+        assert_eq!(config.pdf.pages.to_string(), "1-3,7");
+        assert_eq!(config.pdf.max_pages, 20);
+        assert!(toml::from_str::<Config>("[pdf]\npages = \"0\"").is_err());
     }
 
     #[test]
