@@ -60,6 +60,10 @@ show_hidden = false
 # Binary files show a hex dump of this many leading bytes.
 max_bytes = 512
 
+[binary]
+# Executables and libraries show a summary, then a hex dump of this many bytes.
+hex_bytes = 256
+
 [image]
 # How images are drawn: "auto" (best the terminal supports), "kitty", "sixel",
 # "blocks" (Unicode half blocks), "sextants" (2x3 Unicode blocks) or "ascii".
@@ -94,7 +98,7 @@ channel = "stable"
 # renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
 #   "video" (info view), "table" (CSV/TSV table), "diff" (coloured diff),
-#   "log" (coloured log levels), "hex" (hex dump), "pdf" (info and pages),
+#   "log" (coloured log levels), "hex" (hex dump), "binary" (executable summary), "pdf" (info and pages),
 #   "raw" (exactly cat)
 
 # [[rule]]

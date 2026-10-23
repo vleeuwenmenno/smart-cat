@@ -39,6 +39,7 @@ Run `make check` before handing work back.
 | `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |
 | `src/header.rs` | file name rule printed before each file when several are rendered |
 | `src/hexdump.rs` | hex dump view for binary files |
+| `src/binary.rs` | executable/library summary (goblin for ELF/PE/Mach-O/ar, wasmparser) above a short hex dump |
 | `src/generate.rs` | `--completions` and `--man` (clap_complete, clap_mangen) |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
@@ -52,6 +53,7 @@ Run `make check` before handing work back.
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
 | `tests/script_compat.rs` | shell idioms (`sh -c`, `bash -c`) run with GNU cat and scat: output, status, messages |
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
+| `tests/binary.rs` | binary summaries: system binaries, a hand-built wasm module, hex fallback |
 | `tests/images.rs` | forced image output, captions, piped image bytes |
 | `tests/pdf.rs` | PDF view with hand-written PDFs: header, pages, text, piped bytes, malformed files |
 | `install.sh` | curl-pipe installer (POSIX sh) |

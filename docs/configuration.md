@@ -63,6 +63,12 @@ See [directory-listing.md](directory-listing.md).
 |---|---|---|
 | `max_bytes` | `512` | leading bytes of a binary file shown as a [hex dump](rendering.md#hex-dump) (at least 16) |
 
+## `[binary]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `hex_bytes` | `256` | leading bytes shown as a hex dump under the summary of an [executable or library](binaries.md) (at least 16) |
+
 ## `[pdf]`
 
 | Key | Default | Meaning |
@@ -112,7 +118,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"binary"` ([executable and library summary](binaries.md)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |
