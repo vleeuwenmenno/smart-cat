@@ -30,6 +30,8 @@ pub enum Renderer {
     Raw,
     /// Info view for video files (needs ffprobe).
     Video,
+    /// Audio tags, properties and a waveform.
+    Audio,
 }
 
 impl fmt::Display for Renderer {
@@ -40,6 +42,7 @@ impl fmt::Display for Renderer {
             Renderer::Text => "text",
             Renderer::Raw => "raw",
             Renderer::Video => "video",
+            Renderer::Audio => "audio",
         })
     }
 }

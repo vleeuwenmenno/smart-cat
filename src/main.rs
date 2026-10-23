@@ -1,3 +1,4 @@
+mod audio;
 mod cat;
 mod cli;
 mod config;
@@ -7,11 +8,13 @@ mod highlight;
 mod input;
 mod kv;
 mod listing;
+mod play;
 mod render;
 mod term;
 mod update;
 mod util;
 mod video;
+mod waveform;
 
 use clap::Parser;
 
@@ -53,6 +56,9 @@ fn run(cli: &Cli) -> i32 {
     }
     if cli.diagnose {
         return diagnose::run(cli, &loaded);
+    }
+    if cli.play {
+        return play::run(cli);
     }
     render::run(cli, config)
 }

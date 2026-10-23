@@ -102,6 +102,10 @@ pub struct Cli {
     #[arg(short = 'l', long, value_name = "LANG", help_heading = "Rendering")]
     pub language: Option<String>,
 
+    /// Play audio and video files with mpv instead of showing their info
+    #[arg(long, conflicts_with = "raw", help_heading = "Media")]
+    pub play: bool,
+
     /// Use this config file instead of the default location
     #[arg(
         long,
