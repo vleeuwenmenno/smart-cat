@@ -14,6 +14,7 @@ set -eu
 REPO="${SCAT_REPO:-vleeuwenmenno/smart-cat}"
 INSTALL_DIR="${SCAT_INSTALL_DIR:-$HOME/.local/bin}"
 PRE=0
+COMPLETIONS=1
 VERSION=""
 TMP=""
 STAGED=""
@@ -33,21 +34,7 @@ usage() {
     say "  --pre          install the newest release, including pre-releases"
     say "  --version TAG  install a specific release, e.g. v0.2.0"
     say "  --dir DIR      install into DIR (default: \$SCAT_INSTALL_DIR or ~/.local/bin)"
-}
-
-# Copies a regular file into DIR when DIR already exists (never creates directories).
-put() {
-    [ -f "$1" ] && [ ! -L "$1" ] && [ -d "$2" ] || return 0
-    cp "$1" "$2/$3" && say "installed $2/$3"
-}
-
-# Shell completions and the man page, only into user directories that already exist.
-install_extras() {
-    CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-    DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
-    put "$TMP/completions/scat.fish" "$CONFIG_HOME/fish/completions" scat.fish
-    put "$TMP/completions/scat.bash" "$DATA_HOME/bash-completion/completions" scat
-    put "$TMP/scat.1" "$DATA_HOME/man/man1" scat.1
+    say "  --no-completions  skip shell completions and the man page"
 }
 
 # The whole script is a function called on the last line, so a download cut short
@@ -56,6 +43,7 @@ main() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --pre) PRE=1 ;;
+            --no-completions) COMPLETIONS=0 ;;
             --version)
                 [ $# -ge 2 ] || die "--version needs a tag"
                 VERSION="$2"
@@ -153,8 +141,6 @@ main() {
     [ "$EXPECTED" = "$ACTUAL" ] || die "checksum mismatch: expected $EXPECTED, got $ACTUAL"
 
     tar -xzf "$TMP/$ASSET" -C "$TMP" scat
-    # Completions and the man page are optional: older archives do not have them.
-    tar -xzf "$TMP/$ASSET" -C "$TMP" completions scat.1 2>/dev/null || true
     if [ ! -f "$TMP/scat" ] || [ -L "$TMP/scat" ]; then
         die "the archive has no regular scat binary"
     fi
@@ -172,7 +158,10 @@ main() {
 
     say "installed $NEW_VERSION to $INSTALL_DIR/scat"
 
-    install_extras
+    if [ "$COMPLETIONS" = 1 ]; then
+        "$INSTALL_DIR/scat" --install-completions ||
+            say "warning: completions not installed; run: scat --install-completions" >&2
+    fi
 
     case ":$PATH:" in
         *":$INSTALL_DIR:"*) ;;

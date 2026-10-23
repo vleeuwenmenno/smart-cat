@@ -72,3 +72,32 @@ fn no_headers_or_pager_when_not_a_terminal() {
     assert_eq!(out.stdout, b"one\none\n");
     assert!(out.stderr.is_empty());
 }
+
+#[test]
+fn install_completions_writes_and_removes_user_files() {
+    let home = std::env::temp_dir().join(format!("scat-completions-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    let scat = |arg: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_scat"))
+            .arg(arg)
+            .env("HOME", &home)
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("XDG_DATA_HOME")
+            .output()
+            .unwrap()
+    };
+    let man = home.join(".local/share/man/man1/scat.1");
+
+    let out = scat("--install-completions");
+    assert!(out.status.success(), "{out:?}");
+    assert!(std::fs::read_to_string(&man).unwrap().contains(".TH"));
+
+    std::fs::write(&man, "old").unwrap();
+    assert!(scat("--refresh-completions").status.success());
+    assert!(std::fs::read_to_string(&man).unwrap().contains(".TH"));
+
+    assert!(scat("--uninstall-completions").status.success());
+    assert!(!man.exists());
+    let _ = std::fs::remove_dir_all(&home);
+}

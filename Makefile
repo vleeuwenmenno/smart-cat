@@ -26,9 +26,9 @@ help:
 	row() { printf "  $${T}%-26s$${R} %s" "$$1" "$$2"; [ -z "$${3:-}" ] || printf " $${D}%s$${R}" "$$3"; printf "\n"; }; \
 	printf "\n$${H}scat$${R}: a smarter cat\n"; \
 	printf "\n$${H}Start here$${R}\n"; \
-	row "make install" "Build and install to $(BINDIR)" "(~30 s)"; \
+	row "make install" "Build, install to $(BINDIR), add completions" "(~30 s)"; \
 	row "make run ARGS=\"-n FILE\"" "Run from source"; \
-	row "make uninstall" "Remove $(BINDIR)/scat"; \
+	row "make uninstall" "Remove scat, its completions and man page"; \
 	printf "\n$${H}Develop$${R}\n"; \
 	row "make test" "Run all tests" "(~10 s)"; \
 	row "make check" "Everything CI runs: format, lint, tests"; \
@@ -42,9 +42,11 @@ help:
 install: release
 	install -Dm755 target/release/scat "$(BINDIR)/scat"
 	@echo "installed $$("$(BINDIR)/scat" --version) to $(BINDIR)/scat"
+	@"$(BINDIR)/scat" --install-completions
 	@case ":$$PATH:" in *":$(BINDIR):"*) ;; *) echo "$(BINDIR) is not on PATH (fish: fish_add_path $(BINDIR))";; esac
 
 uninstall:
+	@if [ -x "$(BINDIR)/scat" ]; then "$(BINDIR)/scat" --uninstall-completions; fi
 	rm -f "$(BINDIR)/scat"
 
 run:

@@ -47,6 +47,15 @@ fn run(cli: &Cli) -> i32 {
     if cli.man {
         return generate::man();
     }
+    if cli.install_completions {
+        return generate::install(generate::Mode::Install);
+    }
+    if cli.uninstall_completions {
+        return generate::install(generate::Mode::Uninstall);
+    }
+    if cli.refresh_completions {
+        return generate::install(generate::Mode::Refresh);
+    }
     let loaded = config::load(cli.config.as_deref(), cli.no_config);
     for warning in &loaded.warnings {
         eprintln!("scat: {warning}");

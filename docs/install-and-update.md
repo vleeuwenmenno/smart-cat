@@ -54,16 +54,21 @@ make install        # builds and installs to ~/.local/bin/scat
 
 ## Completions and man page
 
-scat prints both itself, so they always match the flags of the installed version:
+`install.sh` and `make install` set these up for you. They run `scat --install-completions`, which writes:
 
-```sh
-scat --completions fish > ~/.config/fish/completions/scat.fish
-scat --completions bash > ~/.local/share/bash-completion/completions/scat
-scat --completions zsh > ~/.zfunc/_scat      # a directory on your fpath
-scat --man > ~/.local/share/man/man1/scat.1
-```
+| For | File |
+|---|---|
+| fish (if installed) | `~/.config/fish/completions/scat.fish` |
+| bash (if installed) | `~/.local/share/bash-completion/completions/scat` |
+| zsh (if installed) | `~/.local/share/zsh/site-functions/_scat` |
+| `man scat` | `~/.local/share/man/man1/scat.1` |
 
-`--completions` also knows `elvish` and `powershell`. The release archives (x86_64 and aarch64) carry the same files as `completions/scat.{bash,fish,zsh}` and `scat.1`. `install.sh` copies them only into user directories that already exist (`~/.config/fish/completions`, `~/.local/share/bash-completion/completions`, `~/.local/share/man/man1`); it never creates them. Zsh needs you to pick a directory on `fpath`, so the script leaves it alone.
+`XDG_CONFIG_HOME` and `XDG_DATA_HOME` are honoured. fish and bash pick the files up in a new shell. zsh needs that directory on `fpath`; scat prints the line to add to `~/.zshrc` when it writes the zsh file.
+
+- `scat --update` rewrites the files that are already installed, so completions always match the new flags.
+- `scat --uninstall-completions` removes them; `make uninstall` does this too.
+- `install.sh --no-completions` skips them.
+- To manage them yourself, print them with `scat --completions fish|bash|zsh|elvish|powershell` and `scat --man`.
 
 ## Updating
 

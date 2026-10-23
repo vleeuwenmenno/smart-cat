@@ -175,6 +175,18 @@ pub struct Cli {
     #[arg(long, help_heading = "Info")]
     pub man: bool,
 
+    /// Install completions for your shells (fish, bash, zsh) and the man page
+    #[arg(long, help_heading = "Install")]
+    pub install_completions: bool,
+
+    /// Remove the completions and man page installed by --install-completions
+    #[arg(long, conflicts_with = "install_completions", help_heading = "Install")]
+    pub uninstall_completions: bool,
+
+    /// Rewrite completion and man page files that already exist (used after updates)
+    #[arg(long, hide = true)]
+    pub refresh_completions: bool,
+
     /// Update scat to the newest release
     #[arg(long, help_heading = "Updates")]
     pub update: bool,
