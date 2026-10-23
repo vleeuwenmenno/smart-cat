@@ -55,6 +55,8 @@ pub enum Renderer {
     /// Certificate and key summaries; private key material is hidden.
     #[serde(rename = "cert")]
     Certificate,
+    /// SQLite database: header facts, tables, schemas and sample rows.
+    Database,
 }
 
 impl fmt::Display for Renderer {
@@ -77,6 +79,7 @@ impl fmt::Display for Renderer {
             Renderer::Archive => "archive",
             Renderer::Document => "document",
             Renderer::Certificate => "cert",
+            Renderer::Database => "database",
         })
     }
 }
@@ -210,6 +213,7 @@ pub struct Config {
     pub pdf: PdfConfig,
     pub archive: ArchiveConfig,
     pub office: OfficeConfig,
+    pub sqlite: SqliteConfig,
     pub cat_mode: CatModeConfig,
 }
 
@@ -306,6 +310,24 @@ pub struct OfficeConfig {
 impl Default for OfficeConfig {
     fn default() -> Self {
         Self { max_rows: 200 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SqliteConfig {
+    /// Rows shown per table; 0 shows only the schema.
+    pub sample_rows: usize,
+    /// Tables shown in detail after the overview; 0 shows only the overview.
+    pub max_tables: usize,
+}
+
+impl Default for SqliteConfig {
+    fn default() -> Self {
+        Self {
+            sample_rows: 10,
+            max_tables: 20,
+        }
     }
 }
 

@@ -346,6 +346,10 @@ fn process<W: Write>(
         Renderer::Auto if crate::pdf::wants(&detected.mime, &head) => {
             render_pdf(&mut input, out, ctx, source)
         }
+        Renderer::Database => render_sqlite(&mut input, out, ctx, source),
+        Renderer::Auto if matches!(source, Source::Path(_)) && crate::sqlite::wants(&head) => {
+            render_sqlite(&mut input, out, ctx, source)
+        }
         Renderer::Image => render_image(&mut input, out, ctx, source, &head),
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
@@ -1025,6 +1029,28 @@ fn render_archive<W: Write>(
         size,
     };
     archive::render(out, format, &name, source, &opts)
+}
+
+/// SQLite database view; only regular files, SQLite needs to open the path itself.
+fn render_sqlite<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    source: &Source,
+) -> io::Result<()> {
+    let name = source.display_name();
+    let opts = crate::sqlite::Options {
+        name: &name,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        width: listing::terminal_width(),
+        sample_rows: ctx.config.sqlite.sample_rows,
+        max_tables: ctx.config.sqlite.max_tables,
+    };
+    // Built first so a failing database prints only the error, no half a view.
+    let mut buf = Vec::new();
+    crate::sqlite::render(&mut buf, source, input, &opts)?;
+    out.write_all(&buf)
 }
 
 fn render_text<W: Write>(

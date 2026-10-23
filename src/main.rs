@@ -25,6 +25,7 @@ mod pager;
 mod pdf;
 mod play;
 mod render;
+mod sqlite;
 mod table;
 mod term;
 mod update;

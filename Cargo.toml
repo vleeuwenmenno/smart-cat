@@ -33,6 +33,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 quick-xml = "0.41"
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 rustix = { version = "1.1.5", features = ["termios", "event", "fs", "stdio", "process", "pipe"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "hooks"] }
 ruzstd = { version = "0.9.1", default-features = false, features = ["std", "hash"] }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }

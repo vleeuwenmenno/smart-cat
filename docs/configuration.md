@@ -106,6 +106,15 @@ Applies when scat is started under the name `cat`, through a `cat -> scat` symli
 
 Messages say `cat:` either way. Explicit scat flags still work under the name `cat` (`cat -f FILE` renders, `cat --diagnose` reports). There are no other keys: with `render = true`, `[defaults]` and the rules control everything, as for `scat`.
 
+## `[sqlite]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sample_rows` | `10` | rows shown per table; `0` shows the schema only |
+| `max_tables` | `20` | tables shown in detail after the overview; `0` shows the overview only |
+
+See [sqlite.md](sqlite.md).
+
 ## `[update]`
 
 | Key | Default | Meaning |
@@ -146,7 +155,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"binary"` ([executable and library summary](binaries.md)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"archive"` (summary and file tree, see [archives.md](archives.md)), `"document"` (docx, pptx, xlsx, odt, ... as markdown, see [office-documents.md](office-documents.md)), `"cert"` (certificate and key summaries, private keys hidden, see [certificates-and-keys.md](certificates-and-keys.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"binary"` ([executable and library summary](binaries.md)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"archive"` (summary and file tree, see [archives.md](archives.md)), `"document"` (docx, pptx, xlsx, odt, ... as markdown, see [office-documents.md](office-documents.md)), `"cert"` (certificate and key summaries, private keys hidden, see [certificates-and-keys.md](certificates-and-keys.md)), `"database"` (SQLite tables and rows, see [sqlite.md](sqlite.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |

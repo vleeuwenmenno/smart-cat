@@ -124,6 +124,14 @@ max_rows = 200
 # `cat:`. Set true to render on a terminal as `scat` does (messages still say `cat:`).
 render = false
 
+[sqlite]
+# SQLite databases show their tables, then the first of them in detail.
+# Rows shown per table (0 shows the schema only).
+sample_rows = 10
+
+# Tables shown in detail after the overview (0 shows the overview only).
+max_tables = 20
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -138,7 +146,8 @@ channel = "stable"
 #   "log" (coloured log levels), "hex" (hex dump), "binary" (executable summary), "pdf" (info and pages),
 #   "archive" (summary and file tree),
 #   "document" (docx, pptx, xlsx, odt, ... as markdown),
-#   "cert" (certificate and key summaries; private keys hidden), "raw" (exactly cat)
+#   "cert" (certificate and key summaries; private keys hidden),
+#   "database" (SQLite tables and rows), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }
