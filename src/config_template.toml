@@ -54,6 +54,13 @@ protocol = "auto"
 # Play animated GIF, WebP and PNG once (false shows the first frame only).
 animate = true
 
+[pdf]
+# Pages shown when --pages is not given: "1", "1-3,7", "4-" or "all".
+pages = "1"
+
+# Most pages drawn as images per file (text output is not limited).
+max_pages = 20
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -64,7 +71,7 @@ channel = "stable"
 #
 # renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
-#   "video" (info view), "raw" (exactly cat)
+#   "video" (info view), "pdf" (info and pages), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

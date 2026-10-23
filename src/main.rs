@@ -10,6 +10,7 @@ mod input;
 mod kv;
 mod listing;
 mod markdown;
+mod pdf;
 mod play;
 mod render;
 mod term;
@@ -28,6 +29,10 @@ fn main() {
     // SAFETY: setting a signal disposition to SIG_DFL at startup, before any threads exist.
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
+    if let Some(code) = pdf::internal_main() {
+        std::process::exit(code);
     }
 
     let cli = Cli::parse();

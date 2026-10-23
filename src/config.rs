@@ -36,6 +36,8 @@ pub enum Renderer {
     Markdown,
     /// Decode and draw as an image (kitty, sixel or text blocks).
     Image,
+    /// PDF info header and pages as images or text.
+    Pdf,
 }
 
 impl fmt::Display for Renderer {
@@ -49,6 +51,7 @@ impl fmt::Display for Renderer {
             Renderer::Audio => "audio",
             Renderer::Markdown => "markdown",
             Renderer::Image => "image",
+            Renderer::Pdf => "pdf",
         })
     }
 }
@@ -143,6 +146,25 @@ pub struct Config {
     pub update: UpdateConfig,
     pub list: ListConfig,
     pub image: ImageConfig,
+    pub pdf: PdfConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PdfConfig {
+    /// Pages shown when `--pages` is not given.
+    pub pages: crate::pdf::PageSpec,
+    /// Most pages drawn as images per file.
+    pub max_pages: u32,
+}
+
+impl Default for PdfConfig {
+    fn default() -> Self {
+        Self {
+            pages: crate::pdf::PageSpec::default(),
+            max_pages: 20,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -493,6 +515,14 @@ mod tests {
         assert!(m.matches(Some("README.md"), "text/plain"));
         assert!(!m.matches(Some("md"), "text/plain"));
         assert!(!m.matches(None, "text/plain"));
+    }
+
+    #[test]
+    fn pdf_pages_are_validated() {
+        let config: Config = toml::from_str("[pdf]\npages = \"1-3,7\"").unwrap();
+        assert_eq!(config.pdf.pages.to_string(), "1-3,7");
+        assert_eq!(config.pdf.max_pages, 20);
+        assert!(toml::from_str::<Config>("[pdf]\npages = \"0\"").is_err());
     }
 
     #[test]

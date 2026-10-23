@@ -8,6 +8,7 @@
 | [markdown.md](markdown.md) | rendered markdown: wrapping, tables, code blocks, links and OSC 8, seeing the source |
 | [syntax-highlighting.md](syntax-highlighting.md) | language detection, themes, colour depth |
 | [video.md](video.md) | video info view: streams, duration, ffprobe dependency |
+| [pdf.md](pdf.md) | PDF documents: info header, pages as images, `--pages`, `--text`, the parser sandbox |
 | [images.md](images.md) | images in the terminal: kitty, sixel, block and ASCII output, sizing, animation, SVG |
 | [configuration.md](configuration.md) | config file location, `[defaults]`, `[[rule]]`, environment variables |
 | [directory-listing.md](directory-listing.md) | `scat` alone and `scat DIR`: grid and long listings, colours, opting out |
