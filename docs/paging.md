@@ -7,7 +7,7 @@ Long text output goes through a pager, so a big file does not scroll past. Pagin
 All of these must hold:
 
 - standard output is a terminal, and scat is rendering (not `--raw`, not a cat flag like `-A`, not piped);
-- every file is text-like: source, markdown, plain text, directory listings, or a [hex dump](rendering.md#hex-dump). Any image, audio, video or PDF in the list turns paging off for the whole run, because a pager cannot show graphics and `--play` hands the terminal to mpv;
+- every file is text-like: source, markdown, plain text, directory listings, or a [hex dump](rendering.md#hex-dump). Any image, audio, video or PDF in the list, a markdown file with images (`![...]`), or a compressed file turns paging off for the whole run, because a pager cannot show graphics and `--play` hands the terminal to mpv;
 - no file comes from standard input (scat cannot look at a stream ahead of time).
 
 Scat decides from the file list before it prints anything, by sniffing the first 8 KiB of each file. In `auto` mode the output is held back until it would fill the screen. Short output is written directly and no pager starts. That is why `auto` is the default: nothing changes for `scat small.txt`, and the pager only appears when you need it. With `always`, the pager starts for any output.

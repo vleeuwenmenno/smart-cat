@@ -202,3 +202,77 @@ fn play_without_mpv() {
         "scat: tone-play.wav: --play needs mpv (not found on PATH)\n"
     );
 }
+
+/// A WAV with an ID3v2 chunk holding a 40x40 PNG cover, written with lofty.
+fn wav_with_cover(name: &str) -> PathBuf {
+    use lofty::config::WriteOptions;
+    use lofty::picture::{MimeType, Picture, PictureType};
+    use lofty::tag::{Accessor, Tag, TagExt, TagType};
+
+    let path = fixture(name, &wav(1));
+    let cover = image::RgbaImage::from_fn(40, 40, |x, _| {
+        if x < 20 {
+            image::Rgba([255, 0, 0, 255])
+        } else {
+            image::Rgba([0, 0, 255, 255])
+        }
+    });
+    let mut png = Vec::new();
+    cover
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let mut tag = Tag::new(TagType::Id3v2);
+    tag.set_title("Covered".into());
+    tag.push_picture(
+        Picture::unchecked(png)
+            .pic_type(PictureType::CoverFront)
+            .mime_type(MimeType::Png)
+            .build(),
+    );
+    tag.save_to_path(&path, WriteOptions::default()).unwrap();
+    path
+}
+
+fn scat_sized(args: &[&str], dir: &Path, cols: &str) -> String {
+    let out = Command::new(SCAT)
+        .args(args)
+        .current_dir(dir)
+        .env("HOME", dir)
+        .env_remove("SCAT_CONFIG")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("SCAT_PROTOCOL")
+        .env("LC_ALL", "C.UTF-8")
+        .env("COLORTERM", "truecolor")
+        .env("COLUMNS", cols)
+        .env("LINES", "60")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap()
+}
+
+#[test]
+fn cover_art_is_drawn_beside_the_table() {
+    let path = wav_with_cover("cover.wav");
+    let dir = path.parent().unwrap();
+    let args = ["-f", "--protocol=blocks", "--color=always", "cover.wav"];
+    let text = scat_sized(&args, dir, "100");
+    let first = text.lines().next().unwrap();
+    // The first row is the image (red then blue half blocks), then the file name.
+    assert!(first.contains("\x1b[38;2;255;0;0"), "{first:?}");
+    assert!(first.contains('▀'), "{first:?}");
+    assert!(first.ends_with("\x1b[1mcover.wav\x1b[0m"), "{first:?}");
+    assert!(text.contains("Covered"), "{text}");
+    assert!(text.contains("yes (png, 40x40)"), "{text}");
+
+    // Too narrow for side by side: the art goes above the table.
+    let text = scat_sized(&args, dir, "50");
+    let title = text.lines().position(|l| l.contains("cover.wav")).unwrap();
+    assert!(title > 0, "{text}");
+    assert!(text.lines().take(title).all(|l| l.contains('▀')), "{text}");
+
+    // Colours off means ASCII, which gets no art.
+    let out = scat(&["-f", "--color=never", "cover.wav"], dir, "C.UTF-8");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.starts_with("cover.wav\n"), "{text}");
+}

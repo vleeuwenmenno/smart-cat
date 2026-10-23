@@ -86,8 +86,11 @@ fn blocks_draw_half_block_cells_and_a_caption() {
         size_of(&dir, "x.png")
     );
     assert_eq!(caption, expected);
-    // 40 columns wide, a 2:1 image on 1:2 cells is 10 rows, plus the caption.
-    assert_eq!(text.lines().count(), 11);
+    // A small 40x20 image is not blown up to the 40 columns: text output enlarges it
+    // to one sub-pixel per pixel at most, here capped at 32 columns. A 2:1 image on
+    // 1:2 cells is then 8 rows, plus the caption.
+    assert_eq!(text.lines().count(), 9);
+    assert_eq!(text.lines().next().unwrap().matches('▀').count(), 32);
 }
 
 fn size_of(dir: &Path, name: &str) -> String {

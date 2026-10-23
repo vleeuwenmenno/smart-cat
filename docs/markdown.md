@@ -22,7 +22,7 @@ curl -s https://example.com/README.md | scat -l md
 | task lists | `☐` / `☑` |
 | tables | box-drawing borders, column alignment from the `:--` / `:-:` / `--:` row |
 | links | underlined text followed by the dimmed target in parentheses (left out when the text is the URL) |
-| images | a dimmed `[image: alt text]` placeholder |
+| images | local images drawn in place (see [Images](#images)); otherwise a dimmed `[image: alt text]` placeholder |
 | horizontal rules | a full-width line |
 | HTML | dimmed, as written; HTML comments are hidden; `<br>` breaks the line |
 | footnotes | `[1]` at the reference; the notes are collected after a short rule at the end |
@@ -39,6 +39,16 @@ The width is the terminal's column count, else `$COLUMNS`, else 80, and never mo
 - A word longer than a line (a long URL) is split across lines.
 - Code blocks are never wrapped or cut: long lines overflow and the terminal wraps them. This keeps every character visible and copyable.
 - Tables keep their natural column widths when they fit. When they do not, the widest columns shrink step by step and cell text wraps inside them; when a body row wraps, rows get separators so they stay apart. A table with so many columns that even 4-column cells do not fit overflows.
+
+## Images
+
+`![alt](path.png)` with a local path is drawn as a block of its own when the [image output](images.md) method is kitty, sixel, half blocks or sextants. Text before and after it in the same paragraph goes on the lines above and below.
+
+- The path is relative to the markdown file's directory; absolute paths work too. `%20`-style escapes are decoded when the path as written does not exist, and a `?query` or `#fragment` is ignored.
+- Images are at most 15 rows high and as wide as the text column. kitty and sixel never enlarge an image; text methods enlarge small ones only a little (see [images.md](images.md#size)).
+- **No network access**: URLs with a scheme (`https:`, `http:`, `data:`, `file:`, ...) and `//host/...` keep the placeholder, as do missing files, files that are not images, and files over 64 MiB. scat only reads local files you could `cat` yourself, and only decodes them as images.
+- The placeholder also stays for images in headings and table cells, for markdown from standard input (there is no directory to resolve paths from), with ASCII output (colours off, or no UTF-8 locale), and after the first 50 images of a document.
+- In quotes and lists, text-method images are indented with the quote bars and list indent; kitty and sixel images get the prefix on their first row only.
 
 ## Links and hyperlinks
 
@@ -66,7 +76,7 @@ Line numbers (`-n`, `line_numbers`) and `-p` / `--plain` do not apply to rendere
 
 ## Limits
 
-- Images are placeholders until image output lands (see the [roadmap](roadmap.md)).
+- Remote images are never fetched; they stay placeholders.
 - Files larger than `max_highlight_bytes` (16 MiB by default) are shown as source text instead of being rendered.
 - Ordered list numbers are not right-aligned, so items 9 and 10 indent their wrapped lines differently.
 - Math (`$...$`) and definition lists are shown as plain text.

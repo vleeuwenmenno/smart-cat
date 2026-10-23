@@ -1,6 +1,7 @@
 //! Per-file dispatch: cat-compatible output or rendering.
 
 use std::io::{self, BufRead, BufReader, BufWriter, IsTerminal, Read, Write};
+use std::path::Path;
 
 use syntect::easy::HighlightLines;
 
@@ -141,11 +142,25 @@ fn source_pageable(source: &Source, ctx: &Context) -> bool {
     if sniffed.is_err() {
         return false;
     }
+    // Compressed files are decoded later and may hold anything, images included.
+    if decompress::detect(&head).is_some() {
+        return false;
+    }
     let detected = detect::detect(&head);
     let file_name = source.file_name();
     let settings = ctx
         .config
         .settings_for(file_name.as_deref(), &detected.mime);
+    let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+    let as_markdown = match settings.renderer {
+        Renderer::Markdown => true,
+        Renderer::Auto => markdown::is_markdown(file_name.as_deref(), language),
+        _ => false,
+    };
+    // Markdown may draw inline images, and graphics escapes must never reach a pager.
+    if as_markdown && markdown_has_images(path) {
+        return false;
+    }
     pager::renderer_is_pageable(
         settings.renderer,
         &detected.kind,
@@ -153,6 +168,13 @@ fn source_pageable(source: &Source, ctx: &Context) -> bool {
         crate::image::wants(&detected.mime, file_name.as_deref(), &head),
         is_audio(&detected, file_name.as_deref()),
     )
+}
+
+/// Whether a markdown file references an image (`![`), read up to 4 MiB.
+fn markdown_has_images(path: &std::path::Path) -> bool {
+    let mut text = Vec::new();
+    let read = std::fs::File::open(path).and_then(|f| f.take(4 << 20).read_to_end(&mut text));
+    read.is_err() || text.windows(2).any(|w| w == b"![")
 }
 
 /// The rule before a file when several are rendered, with a blank line between files.
@@ -260,6 +282,7 @@ fn process<W: Write>(
             &detected.mime,
             ctx.colors,
             ctx.utf8,
+            &mut || ctx.image_screen(),
         ),
         Renderer::Auto if is_audio(&detected, file_name.as_deref()) => audio::render(
             out,
@@ -268,6 +291,7 @@ fn process<W: Write>(
             &detected.mime,
             ctx.colors,
             ctx.utf8,
+            &mut || ctx.image_screen(),
         ),
         Renderer::Image => render_image(&mut input, out, ctx, source, &head),
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
@@ -292,7 +316,8 @@ fn process<W: Write>(
         Renderer::Hex => render_hex(&mut input, out, ctx),
         Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
         _ if as_markdown => {
-            render_markdown(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
+            let doc = (&settings, file_name.as_deref(), source);
+            render_markdown(&mut input, out, ctx, doc, &head)
         }
         _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
     };
@@ -373,7 +398,7 @@ fn render_video<W: Write>(
     source: &Source,
     input: &Input,
     out: &mut W,
-    ctx: &Context,
+    ctx: &mut Context,
     mime: &str,
 ) -> io::Result<()> {
     let (Source::Path(path), InputKind::Regular { size }) = (source, input.kind) else {
@@ -385,7 +410,10 @@ fn render_video<W: Write>(
         return Ok(());
     };
     let name = source.file_name().unwrap_or_else(|| source.display_name());
-    video::render(out, path, &name, Some(size), mime, ctx.colors)
+    let colors = ctx.colors;
+    video::render(out, path, &name, Some(size), mime, colors, &mut || {
+        ctx.image_screen()
+    })
 }
 
 fn render_table<W: Write>(
@@ -449,8 +477,7 @@ fn render_markdown<W: Write>(
     input: &mut Input,
     out: &mut W,
     ctx: &mut Context,
-    settings: &FileSettings,
-    file_name: Option<&str>,
+    (settings, file_name, source): (&FileSettings, Option<&str>, &Source),
     head: &[u8],
 ) -> io::Result<()> {
     let limit = ctx.config.defaults.max_highlight_bytes;
@@ -477,7 +504,11 @@ fn render_markdown<W: Write>(
         light,
         tab_width: settings.tab_width,
     };
+    // Both callbacks need the context; they never run at the same time.
+    let ctx = std::cell::RefCell::new(ctx);
     let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
+        let mut guard = ctx.borrow_mut();
+        let ctx: &mut Context = &mut guard;
         let theme_name = ctx.theme_name(settings);
         let assets = ctx.assets.get_or_insert_with(Assets::load);
         let syntax = assets.find_syntax(Some(lang), None, "")?;
@@ -509,7 +540,56 @@ fn render_markdown<W: Write>(
         }
         Some(lines)
     };
-    out.write_all(&markdown::render(&text, &opts, &mut highlight))
+    // Image paths are relative to the document's directory; standard input has none,
+    // so its images keep their placeholders.
+    let base = match source {
+        Source::Path(path) => Some(path.parent().map(Path::to_path_buf).unwrap_or_default()),
+        Source::Stdin => None,
+    };
+    let mut images = |dest: &str, max_cols: u16| -> Option<crate::image::Drawn> {
+        let path = markdown::local_image_path(base.as_deref()?, dest)?;
+        let screen = ctx.borrow_mut().image_screen();
+        markdown_image(&screen, &path, max_cols)
+    };
+    let rendered = markdown::render_with_images(&text, &opts, &mut highlight, &mut images);
+    out.write_all(&rendered)
+}
+
+/// Markdown images are at most this many rows high.
+const MARKDOWN_IMAGE_ROWS: u16 = 15;
+/// Larger image files in markdown documents are left as placeholders.
+const MARKDOWN_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Draws a local image for a markdown document with kitty, sixel or blocks. ASCII
+/// output, unreadable files and decoding errors keep the placeholder.
+fn markdown_image(
+    screen: &crate::image::Screen,
+    path: &Path,
+    max_cols: u16,
+) -> Option<crate::image::Drawn> {
+    if screen.method == crate::image::Method::Ascii {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut data = Vec::new();
+    file.take(MARKDOWN_IMAGE_BYTES + 1)
+        .read_to_end(&mut data)
+        .ok()?;
+    if data.len() as u64 > MARKDOWN_IMAGE_BYTES {
+        return None;
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    let head = &data[..data.len().min(SNIFF_BYTES)];
+    let svg = crate::image::is_svg(name.as_deref(), head);
+    let opts = crate::image::ShowOptions {
+        max_cols: Some(max_cols),
+        max_rows: Some(MARKDOWN_IMAGE_ROWS),
+        ..Default::default()
+    };
+    crate::image::draw_encoded(screen, data, svg, &opts).ok()
 }
 
 fn write_cat<W: Write>(

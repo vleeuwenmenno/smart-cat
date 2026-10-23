@@ -7,6 +7,7 @@
 
 use std::borrow::Cow;
 use std::io;
+use std::path::{Path, PathBuf};
 
 use pulldown_cmark::{
     Alignment, BlockQuoteKind, CodeBlockKind, Event, HeadingLevel, Options as ParseOptions, Parser,
@@ -14,6 +15,7 @@ use pulldown_cmark::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::image::Drawn;
 use crate::render::{sanitize_line, sanitize_str};
 use crate::term::ColorDepth;
 
@@ -72,8 +74,82 @@ pub struct Options {
 /// without newlines. `None` means "show it plain".
 pub type Highlighter<'a> = &'a mut dyn FnMut(&str, &str) -> Option<Vec<Vec<u8>>>;
 
-/// Renders a markdown document to bytes ready for the terminal.
+/// Draws an image: `(destination, max columns)` to the encoded image, or `None` to
+/// keep the `[image: alt]` placeholder.
+pub type ImageLoader<'a> = &'a mut dyn FnMut(&str, u16) -> Option<Drawn>;
+
+/// At most this many images are drawn per document; later ones keep the placeholder.
+const MAX_IMAGES: usize = 50;
+
+/// Images in a document resolve to local files only: no scheme (`http:`, `data:`,
+/// `file:`, ...) and no `//host` form. A query or fragment is dropped, and a relative
+/// path is taken from `base` (the markdown file's directory). Returns the path when it
+/// names a regular file. Reading any local file is fine: the user could `cat` it, and
+/// it is only decoded as an image, never printed as text.
+pub fn local_image_path(base: &Path, dest: &str) -> Option<PathBuf> {
+    let dest = dest.trim();
+    if dest.is_empty() || dest.starts_with("//") {
+        return None;
+    }
+    if let Some((scheme, _)) = dest.split_once(':')
+        && !scheme.is_empty()
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+    {
+        return None;
+    }
+    let dest = dest.split(['?', '#']).next().unwrap_or_default();
+    if dest.is_empty() {
+        return None;
+    }
+    let candidates = [Some(dest.to_string()), percent_decode(dest)];
+    candidates.into_iter().flatten().find_map(|d| {
+        let path = base.join(d);
+        path.is_file().then_some(path)
+    })
+}
+
+/// Decodes `%XX` escapes; `None` when there are none or the result is not UTF-8.
+fn percent_decode(text: &str) -> Option<String> {
+    if !text.contains('%') {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2]))
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Renders a markdown document to bytes ready for the terminal. Images keep their
+/// placeholder; see [`render_with_images`].
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn render(text: &str, opts: &Options, highlight: Highlighter) -> Vec<u8> {
+    let mut no_images = |_: &str, _: u16| None;
+    render_with_images(text, opts, highlight, &mut no_images)
+}
+
+/// Renders a markdown document, drawing images through `images` where it returns one.
+pub fn render_with_images(
+    text: &str,
+    opts: &Options,
+    highlight: Highlighter,
+    images: ImageLoader,
+) -> Vec<u8> {
     let mut parse = ParseOptions::empty();
     parse.insert(ParseOptions::ENABLE_TABLES);
     parse.insert(ParseOptions::ENABLE_STRIKETHROUGH);
@@ -82,7 +158,7 @@ pub fn render(text: &str, opts: &Options, highlight: Highlighter) -> Vec<u8> {
     parse.insert(ParseOptions::ENABLE_GFM);
     parse.insert(ParseOptions::ENABLE_YAML_STYLE_METADATA_BLOCKS);
 
-    let mut renderer = Renderer::new(opts, highlight);
+    let mut renderer = Renderer::new(opts, highlight, images);
     for event in Parser::new_ext(text, parse) {
         renderer.event(event);
     }
@@ -273,6 +349,8 @@ struct Renderer<'o, 'h> {
     palette: Palette,
     glyphs: &'static Glyphs,
     highlight: Highlighter<'h>,
+    images: ImageLoader<'h>,
+    images_drawn: usize,
     sink: Sink,
     footnotes: Sink,
     containers: Vec<Container>,
@@ -285,6 +363,7 @@ struct Renderer<'o, 'h> {
     /// Destination and start index in `inline` of each open link.
     open_links: Vec<(String, usize)>,
     image_alt: Option<String>,
+    image_url: String,
     image_depth: usize,
     heading: Option<HeadingLevel>,
     code: Option<(String, String)>,
@@ -293,7 +372,7 @@ struct Renderer<'o, 'h> {
 }
 
 impl<'o, 'h> Renderer<'o, 'h> {
-    fn new(opts: &'o Options, highlight: Highlighter<'h>) -> Self {
+    fn new(opts: &'o Options, highlight: Highlighter<'h>, images: ImageLoader<'h>) -> Self {
         Self {
             opts,
             palette: Palette::new(opts),
@@ -303,6 +382,8 @@ impl<'o, 'h> Renderer<'o, 'h> {
                 &ASCII_GLYPHS
             },
             highlight,
+            images,
+            images_drawn: 0,
             sink: Sink::default(),
             footnotes: Sink::default(),
             containers: Vec::new(),
@@ -313,6 +394,7 @@ impl<'o, 'h> Renderer<'o, 'h> {
             links: Vec::new(),
             open_links: Vec::new(),
             image_alt: None,
+            image_url: String::new(),
             image_depth: 0,
             heading: None,
             code: None,
@@ -567,10 +649,11 @@ impl<'o, 'h> Renderer<'o, 'h> {
                 self.open_links
                     .push((dest_url.into_string(), self.inline.len()));
             }
-            Tag::Image { .. } => {
+            Tag::Image { dest_url, .. } => {
                 self.image_depth += 1;
                 if self.image_depth == 1 {
                     self.image_alt = Some(String::new());
+                    self.image_url = dest_url.into_string();
                 }
             }
             _ => {}
@@ -693,8 +776,9 @@ impl<'o, 'h> Renderer<'o, 'h> {
                 if self.image_depth == 0
                     && let Some(alt) = self.image_alt.take()
                 {
-                    // TODO(images): draw the image inline here once image output exists;
-                    // until then a placeholder with the alt text stands in for it.
+                    if self.draw_image() {
+                        return;
+                    }
                     let alt = clean(alt.trim());
                     let text = if alt.is_empty() {
                         "[image]".to_string()
@@ -710,6 +794,37 @@ impl<'o, 'h> Renderer<'o, 'h> {
             }
             _ => {}
         }
+    }
+
+    /// Draws the image that just ended as a block of its own, after the text before
+    /// it. Images in headings and tables keep their placeholder.
+    fn draw_image(&mut self) -> bool {
+        if self.table.is_some() || self.heading.is_some() || self.images_drawn >= MAX_IMAGES {
+            return false;
+        }
+        let url = std::mem::take(&mut self.image_url);
+        let max_cols = u16::try_from(self.avail()).unwrap_or(u16::MAX);
+        let Some(drawn) = (self.images)(&url, max_cols) else {
+            return false;
+        };
+        self.images_drawn += 1;
+        self.flush_paragraph();
+        self.begin_block();
+        if drawn.is_pixel() {
+            let pieces = self.prefix();
+            write_pieces(&mut self.sink.buf, &pieces, self.opts, &self.links);
+            self.sink.buf.extend_from_slice(&drawn.data);
+            self.sink.buf.push(b'\n');
+        } else {
+            for line in drawn.lines() {
+                let pieces = self.prefix();
+                write_pieces(&mut self.sink.buf, &pieces, self.opts, &self.links);
+                self.sink.buf.extend_from_slice(line);
+                self.sink.buf.push(b'\n');
+            }
+        }
+        self.sink.started = true;
+        true
     }
 
     fn finish(mut self) -> Vec<u8> {
@@ -1214,6 +1329,87 @@ mod tests {
     fn md_with(text: &str, opts: &Options) -> String {
         let mut none = |_: &str, _: &str| None;
         String::from_utf8(render(text, opts, &mut none)).unwrap()
+    }
+
+    fn md_images(text: &str, drawn: &Drawn, seen: &mut Vec<(String, u16)>) -> String {
+        let mut none = |_: &str, _: &str| None;
+        let mut images = |url: &str, cols: u16| {
+            seen.push((url.to_string(), cols));
+            (url != "skip.png").then(|| drawn.clone())
+        };
+        let out = render_with_images(text, &opts(40, false, true), &mut none, &mut images);
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn images_become_blocks_with_container_prefixes() {
+        let drawn = Drawn {
+            data: b"AB\nCD\n".to_vec(),
+            cols: 2,
+            rows: 2,
+            method: crate::image::Method::HalfBlocks,
+        };
+        let mut seen = Vec::new();
+        let out = md_images(
+            "Text ![a](a.png) more\n\n- item\n\n  ![b](b.png)\n\n# H ![c](c.png)\n\n![d](skip.png)\n",
+            &drawn,
+            &mut seen,
+        );
+        assert_eq!(
+            out,
+            "Text\nAB\nCD\nmore\n\n• item\n\n  AB\n  CD\n\nH [image: c]\n\
+             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n[image: d]\n"
+        );
+        // Headings never ask; list items get their indent taken off the width.
+        assert_eq!(
+            seen,
+            [
+                ("a.png".to_string(), 40),
+                ("b.png".to_string(), 38),
+                ("skip.png".to_string(), 40)
+            ]
+        );
+    }
+
+    #[test]
+    fn pixel_images_get_one_prefix_and_a_newline() {
+        let drawn = Drawn {
+            data: b"\x1bPq-\x1b\\".to_vec(),
+            cols: 4,
+            rows: 2,
+            method: crate::image::Method::Sixel,
+        };
+        let out = md_images("> ![a](a.png)\n", &drawn, &mut Vec::new());
+        assert_eq!(out, "│ \x1bPq-\x1b\\\n");
+    }
+
+    #[test]
+    fn image_paths_stay_local() {
+        let dir = std::env::temp_dir().join(format!("scat-md-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub dir")).unwrap();
+        std::fs::write(dir.join("sub dir/a.png"), b"x").unwrap();
+        let found = Some(dir.join("sub dir/a.png"));
+        assert_eq!(local_image_path(&dir, "sub dir/a.png"), found);
+        assert_eq!(local_image_path(&dir, "sub%20dir/a.png"), found);
+        assert_eq!(local_image_path(&dir, "sub dir/a.png?raw=true#x"), found);
+        let abs = dir.join("sub dir/a.png");
+        assert_eq!(
+            local_image_path(Path::new("/nonexistent"), abs.to_str().unwrap()),
+            found
+        );
+        for remote in [
+            "https://example.com/a.png",
+            "http:sub dir/a.png",
+            "file:sub dir/a.png",
+            "data:image/png;base64,AAAA",
+            "//example.com/a.png",
+            "",
+            "sub dir",
+            "missing.png",
+        ] {
+            assert_eq!(local_image_path(&dir, remote), None, "{remote}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

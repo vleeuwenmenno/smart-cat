@@ -115,3 +115,36 @@ fn stdin_gets_a_notice_and_status_zero() {
         "scat: -: video info needs a file (use --raw for bytes)\n"
     );
 }
+
+#[test]
+fn poster_frame_is_drawn_above_the_table() {
+    let dir = dir();
+    if !make_video(&dir, "poster.mp4") {
+        return;
+    }
+    std::fs::copy(dir.join("poster.mp4"), dir.join("-ss poster.mp4")).unwrap();
+    for name in ["poster.mp4", "-ss poster.mp4"] {
+        let out = Command::new(SCAT)
+            .args(["-f", "--protocol=blocks", "--color=always", "--", name])
+            .current_dir(&dir)
+            .env_remove("SCAT_CONFIG")
+            .env_remove("SCAT_PROTOCOL")
+            .env("HOME", &dir)
+            .env_remove("XDG_CONFIG_HOME")
+            .env("LC_ALL", "C.UTF-8")
+            .env("COLUMNS", "80")
+            .env("LINES", "60")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let text = String::from_utf8(out.stdout).unwrap();
+        let title = text
+            .lines()
+            .position(|l| l.contains(name))
+            .expect("table title");
+        // 320x240 in at most 20 rows (a third of 60): 20 rows of half blocks.
+        assert_eq!(title, 20, "{name}: {text}");
+        assert!(text.lines().take(title).all(|l| l.contains('▀')), "{text}");
+        assert!(text.contains("320x240"), "{text}");
+    }
+}
