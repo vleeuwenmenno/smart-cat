@@ -1,4 +1,5 @@
 mod audio;
+mod binary;
 mod cat;
 mod cli;
 mod config;

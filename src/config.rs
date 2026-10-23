@@ -40,6 +40,8 @@ pub enum Renderer {
     Table,
     /// Hex dump of the first bytes.
     Hex,
+    /// Summary of an executable or library, then a short hex dump.
+    Binary,
     /// Coloured unified diff.
     Diff,
     /// Coloured log levels and timestamps.
@@ -61,6 +63,7 @@ impl fmt::Display for Renderer {
             Renderer::Image => "image",
             Renderer::Table => "table",
             Renderer::Hex => "hex",
+            Renderer::Binary => "binary",
             Renderer::Diff => "diff",
             Renderer::Log => "log",
             Renderer::Pdf => "pdf",
@@ -173,6 +176,7 @@ pub struct Config {
     pub image: ImageConfig,
     pub table: TableConfig,
     pub hexdump: HexdumpConfig,
+    pub binary: BinaryConfig,
     pub pdf: PdfConfig,
 }
 
@@ -200,6 +204,21 @@ impl Default for HexdumpConfig {
     fn default() -> Self {
         Self {
             max_bytes: crate::hexdump::DEFAULT_MAX_BYTES,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BinaryConfig {
+    /// How many leading bytes the hex dump under a binary summary shows.
+    pub hex_bytes: usize,
+}
+
+impl Default for BinaryConfig {
+    fn default() -> Self {
+        Self {
+            hex_bytes: crate::binary::DEFAULT_HEX_BYTES,
         }
     }
 }

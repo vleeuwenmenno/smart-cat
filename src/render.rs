@@ -6,6 +6,7 @@ use std::path::Path;
 use syntect::easy::HighlightLines;
 
 use crate::audio;
+use crate::binary;
 use crate::cat::{self, CatOptions, CatState};
 use crate::cli::Cli;
 use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, PagingMode, Renderer};
@@ -317,6 +318,10 @@ fn process<W: Write>(
             &head,
             delimited.unwrap_or(table::Delimiter::Sniff),
         ),
+        Renderer::Binary => render_binary(&mut input, out, ctx, source),
+        Renderer::Auto if detected.kind == Kind::Binary && binary::wants(&head) => {
+            render_binary(&mut input, out, ctx, source)
+        }
         Renderer::Hex => render_hex(&mut input, out, ctx),
         Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
         _ if as_markdown => {
@@ -394,6 +399,27 @@ fn render_hex<W: Write>(input: &mut Input, out: &mut W, ctx: &Context) -> io::Re
         max_bytes: ctx.config.hexdump.max_bytes.max(16),
     };
     hexdump::render(out, &mut input.reader, total, &opts)
+}
+
+/// Summary table for executables and libraries, then a short hex dump.
+fn render_binary<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    source: &Source,
+) -> io::Result<()> {
+    let total = match input.kind {
+        InputKind::Regular { size } => Some(size),
+        _ => None,
+    };
+    let opts = binary::Options {
+        name: &source.display_name(),
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        hex_bytes: ctx.config.binary.hex_bytes.max(16),
+        fallback_bytes: ctx.config.hexdump.max_bytes.max(16),
+    };
+    binary::render(out, &mut input.reader, total, &opts)
 }
 
 /// Video info view. ffprobe opens the file by path, so standard input and pipes only

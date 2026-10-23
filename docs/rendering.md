@@ -14,17 +14,18 @@ scat reads the first 8 KiB of each file to decide what it is:
 | `.gz` `.xz` `.zst` `.bz2` | [decompressed](compressed-files.md), then the inside is detected again |
 | diffs, logs | [coloured](diffs-and-logs.md) |
 | audio (`audio/*`, plus `.wv .ape .mpc .spx .aac` by name) | [tag table and waveform](audio.md) |
+| executable, library, object, `.a`, wasm | [summary table](binaries.md) and a short hex dump |
 | other binary | [hex dump](#hex-dump) of the first 512 bytes (`--raw` prints the bytes) |
 
 Text means no NUL bytes and at most 5% invalid UTF-8, so Latin-1 files still count as text. The type comes from magic bytes (`infer`), for example `image/png` or `application/x-executable`.
 
-A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `markdown`, `image`, `audio`, `video`, `table`, `diff`, `log`, `hex` or `raw`.
+A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `markdown`, `image`, `audio`, `video`, `table`, `diff`, `log`, `hex`, `binary` or `raw`.
 
 Long text output is [paged](paging.md), and several files each get a header rule.
 
 ## Hex dump
 
-Binary files that no other renderer claims (executables, archives, unknown data) show their first bytes as a dump:
+Binary files that no other renderer claims (unknown data, and files [the binary summary](binaries.md) cannot parse) show their first bytes as a dump:
 
 ```
 00000000  7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  │·ELF············│

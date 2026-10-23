@@ -236,6 +236,9 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
         (Renderer::Auto, _) if crate::render::is_audio(&detected, file_name.as_deref()) => {
             "audio (auto)".to_string()
         }
+        (Renderer::Auto, Kind::Binary) if crate::binary::wants(&head) => {
+            "binary (auto)".to_string()
+        }
         (Renderer::Auto, Kind::Binary) => "hex (auto)".to_string(),
         (Renderer::Auto, Kind::Text)
             if crate::markdown::is_markdown(
@@ -304,6 +307,7 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
                 | Renderer::Image
                 | Renderer::Table
                 | Renderer::Hex
+                | Renderer::Binary
                 | Renderer::Pdf
         )
         && !(settings.renderer == Renderer::Auto && (is_image || is_pdf))
