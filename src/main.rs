@@ -25,6 +25,7 @@ mod pager;
 mod pdf;
 mod play;
 mod render;
+mod sandbox;
 mod sqlite;
 mod table;
 mod term;
@@ -45,7 +46,7 @@ fn main() {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
-    if let Some(code) = pdf::internal_main() {
+    if let Some(code) = pdf::internal_main().or_else(office::internal_main) {
         std::process::exit(code);
     }
 

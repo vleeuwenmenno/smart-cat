@@ -29,6 +29,7 @@ infer = "0.22.0"
 libc = "0.2.191"
 lofty = "0.24.0"
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz"] }
+cfb = "0.14.0"
 pulldown-cmark = { version = "0.13", default-features = false }
 quick-xml = "0.41"
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
@@ -54,6 +55,7 @@ x509-parser = "0.18.1"
 [dev-dependencies]
 sevenz-rust2 = { version = "0.20.2", default-features = false, features = ["compress"] }
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz", "encoder"] }
+cfb = "0.14.0"
 
 [profile.release]
 lto = "fat"
