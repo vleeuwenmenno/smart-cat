@@ -6,7 +6,7 @@ When rendering, scat decompresses single-stream `.gz`, `.xz`, `.zst` and `.bz2` 
 
 1. The format is recognised from the magic bytes, not the extension. A gzip file called `blob` is still decompressed.
 2. The stream is decoded while it is printed, so a huge file starts showing at once and memory stays small.
-3. The first 8 KiB of the decompressed data is sniffed again, with the file name minus the compression suffix (`app.log.gz` becomes `app.log`). The inside gets its normal renderer: syntax highlighting, markdown, [diff and log colours](diffs-and-logs.md), images, or the binary notice.
+3. The first 8 KiB of the decompressed data is sniffed again, with the file name minus the compression suffix (`app.log.gz` becomes `app.log`). The inside gets its normal renderer: syntax highlighting, markdown, [diff and log colours](diffs-and-logs.md), images, or the [hex dump](rendering.md#hex-dump).
 4. [Config rules](configuration.md) match the inner name, so `match = { ext = "log" }` also applies to `app.log.gz`. A rule with `renderer = "raw"` that matches the compressed file turns decompression off.
 
 Multi-member gzip, bzip2 and xz files (several streams appended together) are read to the end.
@@ -14,7 +14,7 @@ Multi-member gzip, bzip2 and xz files (several streams appended together) are re
 ## What is not decompressed
 
 - Piped output. `scat app.log.gz | cat` prints the compressed bytes, exactly like `cat`. `-f` renders into a pipe, and then decompresses.
-- Tarballs: `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.tar.zst`, `.tar.bz2`, `.tbz2`, and any stream whose first block is a tar header (`ustar`). They are not a text stream; they get the binary notice until an archive listing exists.
+- Tarballs: `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.tar.zst`, `.tar.bz2`, `.tbz2`, and any stream whose first block is a tar header (`ustar`). They are not a text stream; they get the [hex dump](rendering.md#hex-dump) of the compressed bytes until an archive listing exists.
 - Anything with a `raw` renderer rule.
 
 ## Limits
