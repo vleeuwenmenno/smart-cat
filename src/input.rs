@@ -26,11 +26,12 @@ impl Source {
             .collect()
     }
 
-    /// The name used in messages, as cat shows it.
+    /// The name used in messages, as cat shows it, but sanitized: a file name can
+    /// hold escape sequences that must not reach the terminal through stderr.
     pub fn display_name(&self) -> String {
         match self {
             Source::Stdin => "-".into(),
-            Source::Path(p) => p.display().to_string(),
+            Source::Path(p) => crate::render::sanitize_str(&p.to_string_lossy()),
         }
     }
 
@@ -102,4 +103,35 @@ pub fn stdout_identity() -> Option<(u64, u64)> {
     let is_regular =
         rustix::fs::FileType::from_raw_mode(stat.st_mode) == rustix::fs::FileType::RegularFile;
     is_regular.then_some((stat.st_dev, stat.st_ino))
+}
+
+/// GNU cat's "input file is output file" check. Copying a regular file onto itself is
+/// only an error when it would never end: when the input's read offset lies before the
+/// point where output is written (the end of the file for O_APPEND). A named file is
+/// read from offset 0; standard input may already be part-way or at the end.
+pub fn copies_onto_itself(source: &Source, input: &Input, out: Option<(u64, u64)>) -> bool {
+    let InputKind::Regular { size } = input.kind else {
+        return false;
+    };
+    if out.is_none() || out != input.identity {
+        return false;
+    }
+    let in_pos = match source {
+        Source::Stdin => match rustix::fs::tell(io::stdin()) {
+            Ok(pos) => pos,
+            Err(_) => return false,
+        },
+        Source::Path(_) => 0,
+    };
+    let append = rustix::fs::fcntl_getfl(io::stdout())
+        .is_ok_and(|flags| flags.contains(rustix::fs::OFlags::APPEND));
+    let out_pos = if append {
+        size
+    } else {
+        match rustix::fs::tell(io::stdout()) {
+            Ok(pos) => pos,
+            Err(_) => return false,
+        }
+    };
+    in_pos < out_pos
 }

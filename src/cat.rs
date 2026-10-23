@@ -1,11 +1,8 @@
 //! GNU cat compatible output: line numbering, squeezing and ^/M- notation.
 
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 
 use crate::cli::Cli;
-use crate::util::read_line_capped;
-
-const MAX_LINE: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CatOptions {
@@ -50,6 +47,9 @@ pub struct CatState {
     line: u64,
     at_line_start: bool,
     blank_run: u32,
+    /// With -E, a carriage return at the end of a chunk or file is held back until the
+    /// next byte shows whether it precedes a newline (then it is shown as ^M).
+    pending_cr: bool,
 }
 
 impl Default for CatState {
@@ -58,6 +58,7 @@ impl Default for CatState {
             line: 0,
             at_line_start: true,
             blank_run: 0,
+            pending_cr: false,
         }
     }
 }
@@ -78,30 +79,55 @@ pub fn copy_raw<R: Read, W: Write>(reader: &mut R, out: &mut W) -> io::Result<()
     }
 }
 
+/// Runs `reader` through the cat state machine. Each chunk is processed as soon as it
+/// arrives (a partial line from a slow pipe is shown right away, as GNU cat does), and
+/// the output is flushed before every read that could block.
 pub fn process<R: Read, W: Write>(
     reader: &mut BufReader<R>,
     out: &mut W,
     opts: &CatOptions,
     state: &mut CatState,
 ) -> io::Result<()> {
-    let mut line = Vec::with_capacity(8 * 1024);
     loop {
         if reader.buffer().is_empty() {
             out.flush()?;
         }
-        let Some(terminated) = read_line_capped(reader, &mut line, MAX_LINE)? else {
-            return Ok(());
+        let chunk = match reader.fill_buf() {
+            Ok([]) => return Ok(()),
+            Ok(chunk) => chunk,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
         };
-        let body = if terminated {
-            &line[..line.len() - 1]
-        } else {
-            &line[..]
-        };
+        process_chunk(chunk, out, opts, state)?;
+        let n = chunk.len();
+        reader.consume(n);
+    }
+}
 
+/// Writes what is still held back at the very end of the input: a carriage return
+/// that might have been followed by a newline in the next chunk or file.
+pub fn finish<W: Write>(out: &mut W, state: &mut CatState) -> io::Result<()> {
+    if std::mem::take(&mut state.pending_cr) {
+        out.write_all(b"\r")?;
+    }
+    Ok(())
+}
+
+fn process_chunk<W: Write>(
+    chunk: &[u8],
+    out: &mut W,
+    opts: &CatOptions,
+    state: &mut CatState,
+) -> io::Result<()> {
+    // Like coreutils 9, -E marks a carriage return before the newline as ^M.
+    let mark_cr = opts.show_ends && !opts.show_nonprinting;
+    let mut i = 0;
+    while i < chunk.len() {
         if state.at_line_start {
-            let blank = terminated && body.is_empty();
+            let blank = chunk[i] == b'\n';
             if blank {
                 if opts.squeeze_blank && state.blank_run > 0 {
+                    i += 1;
                     continue;
                 }
                 state.blank_run += 1;
@@ -115,25 +141,45 @@ pub fn process<R: Read, W: Write>(
             } else if opts.number {
                 write_number(out, state)?;
             }
+            state.at_line_start = false;
         }
 
-        // Like coreutils 9, -E marks a carriage return before the newline as ^M.
-        let cr_before_newline =
-            terminated && opts.show_ends && !opts.show_nonprinting && body.last() == Some(&b'\r');
-        if cr_before_newline {
-            write_body(out, &body[..body.len() - 1], opts)?;
-            out.write_all(b"^M")?;
-        } else {
-            write_body(out, body, opts)?;
-        }
-        if terminated {
-            if opts.show_ends {
-                out.write_all(b"$")?;
+        let rest = &chunk[i..];
+        let newline = rest.iter().position(|&b| b == b'\n');
+        let mut body = &rest[..newline.unwrap_or(rest.len())];
+        if std::mem::take(&mut state.pending_cr) {
+            if body.is_empty() && newline.is_some() {
+                out.write_all(b"^M")?;
+            } else {
+                out.write_all(b"\r")?;
             }
-            out.write_all(b"\n")?;
         }
-        state.at_line_start = terminated;
+        let mut cr_before_newline = false;
+        if mark_cr && body.last() == Some(&b'\r') {
+            body = &body[..body.len() - 1];
+            if newline.is_some() {
+                cr_before_newline = true;
+            } else {
+                state.pending_cr = true;
+            }
+        }
+        write_body(out, body, opts)?;
+        if cr_before_newline {
+            out.write_all(b"^M")?;
+        }
+        match newline {
+            Some(pos) => {
+                if opts.show_ends {
+                    out.write_all(b"$")?;
+                }
+                out.write_all(b"\n")?;
+                state.at_line_start = true;
+                i += pos + 1;
+            }
+            None => i = chunk.len(),
+        }
     }
+    Ok(())
 }
 
 fn write_number<W: Write>(out: &mut W, state: &mut CatState) -> io::Result<()> {
@@ -194,6 +240,7 @@ mod tests {
             &mut state,
         )
         .unwrap();
+        finish(&mut out, &mut state).unwrap();
         String::from_utf8(out).unwrap()
     }
 
@@ -253,5 +300,68 @@ mod tests {
             String::from_utf8(out).unwrap(),
             "     1\ta\n     2\tbc\n     3\td\n"
         );
+    }
+
+    #[test]
+    fn carriage_return_split_across_chunks_and_files() {
+        let opts = CatOptions {
+            show_ends: true,
+            ..Default::default()
+        };
+        // A two-byte buffer splits "\r\n" across reads.
+        let mut out = Vec::new();
+        let mut state = CatState::default();
+        let mut reader = BufReader::with_capacity(2, io::Cursor::new(b"ab\r\nc\r"));
+        process(&mut reader, &mut out, &opts, &mut state).unwrap();
+        process(
+            &mut BufReader::new(io::Cursor::new(b"\nd\r")),
+            &mut out,
+            &opts,
+            &mut state,
+        )
+        .unwrap();
+        process(
+            &mut BufReader::new(io::Cursor::new(b"x\n")),
+            &mut out,
+            &opts,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(out, b"ab^M$\nc^M$\nd\rx$\n");
+        process(
+            &mut BufReader::new(io::Cursor::new(b"e\r")),
+            &mut out,
+            &opts,
+            &mut state,
+        )
+        .unwrap();
+        finish(&mut out, &mut state).unwrap();
+        assert!(out.ends_with(b"e\r"));
+    }
+
+    #[test]
+    fn small_chunks_match_whole_input() {
+        let input = b"\n\n\na\tb\r\n\n\n\x1bc\r\n\r\r\nlast";
+        for opts in [
+            CatOptions {
+                number: true,
+                squeeze_blank: true,
+                show_ends: true,
+                ..Default::default()
+            },
+            CatOptions {
+                number_nonblank: true,
+                show_tabs: true,
+                show_nonprinting: true,
+                ..Default::default()
+            },
+        ] {
+            let mut out = Vec::new();
+            let mut state = CatState::default();
+            let mut reader = BufReader::with_capacity(1, io::Cursor::new(input));
+            process(&mut reader, &mut out, &opts, &mut state).unwrap();
+            finish(&mut out, &mut state).unwrap();
+            assert_eq!(String::from_utf8(out).unwrap(), run(input, opts));
+        }
     }
 }
