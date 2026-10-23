@@ -237,3 +237,52 @@ fn pages_beyond_the_end_and_invalid_specs() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("backwards range"));
 }
+
+#[test]
+fn max_pages_caps_drawn_pages_with_a_note() {
+    let dir = fixtures();
+    let config = dir.join("cap.toml");
+    std::fs::write(&config, "[pdf]\nmax_pages = 2\n").unwrap();
+    let out = command(
+        &[
+            "-f",
+            "--protocol=blocks",
+            "--color=always",
+            "--pages",
+            "all",
+            "doc.pdf",
+        ],
+        &dir,
+    )
+    .env("SCAT_CONFIG", &config)
+    .output()
+    .unwrap();
+    let text = strip_sgr(&String::from_utf8(out.stdout).unwrap());
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("showing 2 of 3 selected pages; [pdf] max_pages sets the limit"),
+        "{text}"
+    );
+    assert!(
+        text.trim_end()
+            .ends_with("pages 1-2 of 3 — use --pages 3 for more"),
+        "{text}"
+    );
+}
+
+#[test]
+fn text_without_pdftotext_prints_a_hint() {
+    let dir = fixtures();
+    let out = command(&["-f", "--text", "doc.pdf"], &dir)
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stdout.contains("Test Doc"), "header still shown: {stdout}");
+    assert!(
+        stderr.contains("install poppler (pdftotext) for text output"),
+        "{stderr}"
+    );
+}

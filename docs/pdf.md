@@ -61,7 +61,7 @@ Title, author, subject, page count, the first page's size in millimetres (with t
 
 MuPDF is not used: its bindings are AGPL.
 
-Typical timings (release build, 1600x1000 pixel box): a text page 10-20 ms, a magazine cover with a large photo about 50 ms. The info header adds a few milliseconds.
+Typical timings (release build, 160x50 terminal, whole run including the header): a Word text page about 30 ms with Unicode blocks, 40 ms with kitty and 65 ms with sixel; a one-page Visio diagram about 100 ms with sixel. The info header alone takes about 3 ms, and text output with `pdftotext` about 20 ms.
 
 ## Sandbox
 
