@@ -5,6 +5,10 @@
 //! the markdown renderer draws. Everything in a document is untrusted: decompressed
 //! parts, row counts, slide counts and the markdown size are capped, and text is
 //! stripped of control characters before it reaches the markdown.
+//!
+//! calamine (spreadsheets) can panic on hostile files, which aborts a release build.
+//! Spreadsheets are therefore converted in a sandboxed child process, scat itself
+//! started with [`crate::sandbox::SHEET_FLAG`]; see [`crate::sandbox`].
 
 mod docx;
 mod md;
@@ -24,6 +28,11 @@ const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_PART_BYTES: u64 = 64 * 1024 * 1024;
 /// All decompressed parts of one spreadsheet together, checked on the declared sizes.
 const MAX_SHEET_BYTES: u64 = 512 * 1024 * 1024;
+/// Wall clock limit for converting one spreadsheet in the helper.
+const SHEET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// Address space limit for the spreadsheet helper: the file itself, the decompressed
+/// parts calamine keeps, and the markdown.
+const SHEET_MEMORY: u64 = 2 << 30;
 /// The markdown of one document stops growing here.
 const MAX_MARKDOWN_BYTES: usize = 8 * 1024 * 1024;
 /// At most this many slides are converted.
@@ -54,6 +63,16 @@ impl Format {
             Format::Xlsx => "Excel workbook (xlsx)",
             Format::Xls => "Excel workbook (xls)",
             Format::Ods => "OpenDocument spreadsheet (ods)",
+        }
+    }
+
+    /// The helper's name for a spreadsheet format.
+    fn sheet_arg(self) -> Option<&'static str> {
+        match self {
+            Format::Xlsx => Some("xlsx"),
+            Format::Xls => Some("xls"),
+            Format::Ods => Some("ods"),
+            _ => None,
         }
     }
 
@@ -164,7 +183,81 @@ pub fn convert(format: Format, data: &[u8], limits: &Limits) -> Result<Converted
         Format::Docx => docx::convert(open_zip(data)?),
         Format::Pptx => pptx::convert(open_zip(data)?),
         Format::Odt | Format::Odp => odf::convert(open_zip(data)?, format),
-        Format::Xlsx | Format::Xls | Format::Ods => sheets::convert(format, data, limits),
+        Format::Xlsx | Format::Xls | Format::Ods => convert_sheet(format, data, limits),
+    }
+}
+
+/// Converts a spreadsheet in the sandboxed helper. The document goes to its standard
+/// input; it answers with the counts on the first line and the markdown after it.
+fn convert_sheet(format: Format, data: &[u8], limits: &Limits) -> Result<Converted, String> {
+    use crate::sandbox;
+    let name = format.sheet_arg().ok_or("not a spreadsheet")?;
+    let cmd = sandbox::helper(sandbox::SHEET_FLAG, [name, &limits.max_rows.to_string()]);
+    let out = sandbox::run_with(
+        cmd,
+        sandbox::Limits {
+            timeout: SHEET_TIMEOUT,
+            memory: SHEET_MEMORY,
+            stdin: sandbox::Input::Bytes(data),
+        },
+    )
+    .map_err(|err| err.to_string())?;
+    let text = String::from_utf8(out).map_err(|_| "the helper's output is not UTF-8")?;
+    let (counts, markdown) = text
+        .split_once('\n')
+        .ok_or("the helper's output is incomplete")?;
+    Ok(Converted {
+        counts: counts.to_string(),
+        markdown: markdown.to_string(),
+    })
+}
+
+/// Runs the spreadsheet helper when scat was started as one (`scat --internal-sheet
+/// FORMAT MAX_ROWS`, the document on standard input); `None` for a normal run.
+pub fn internal_main() -> Option<i32> {
+    let mut args = std::env::args_os().skip(1);
+    if args.next()? != crate::sandbox::SHEET_FLAG {
+        return None;
+    }
+    crate::sandbox::report_panics("spreadsheet parser");
+    let args: Vec<String> = args.filter_map(|a| a.into_string().ok()).collect();
+    let result = (|| {
+        let format = match args.first().map(String::as_str) {
+            Some("xlsx") => Format::Xlsx,
+            Some("xls") => Format::Xls,
+            Some("ods") => Format::Ods,
+            _ => return Err("usage error".to_string()),
+        };
+        let max_rows = args
+            .get(1)
+            .and_then(|n| n.parse().ok())
+            .ok_or("usage error")?;
+        let mut data = Vec::new();
+        io::stdin()
+            .lock()
+            .take(MAX_FILE_BYTES + 1)
+            .read_to_end(&mut data)
+            .map_err(|err| crate::util::io_message(&err))?;
+        if data.len() as u64 > MAX_FILE_BYTES {
+            return Err(format!(
+                "input is larger than {}",
+                human_size(MAX_FILE_BYTES)
+            ));
+        }
+        sheets::convert(format, &data, &Limits { max_rows })
+    })();
+    match result {
+        Ok(converted) => {
+            let mut stdout = io::stdout().lock();
+            let written = writeln!(stdout, "{}", converted.counts)
+                .and_then(|()| stdout.write_all(converted.markdown.as_bytes()))
+                .and_then(|()| stdout.flush());
+            Some(if written.is_ok() { 0 } else { 1 })
+        }
+        Err(message) => {
+            eprintln!("scat: {message}");
+            Some(2)
+        }
     }
 }
 

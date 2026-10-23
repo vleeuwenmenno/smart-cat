@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::image::{Screen, ShowOptions};
 use crate::input::{Input, InputKind};
-use crate::pdf::sandbox;
+use crate::sandbox;
 
 /// Hidden first argument that turns scat into the font helper process.
 pub const FLAG: &str = "--internal-font";
@@ -98,8 +98,13 @@ pub struct Options<'a> {
 
 /// Runs the helper with `data` on its standard input.
 fn run_helper(data: Vec<u8>, args: &[String], timeout: Duration) -> Result<Vec<u8>, String> {
-    let cmd = sandbox::self_command(FLAG, args.iter().map(OsString::from));
-    sandbox::run_with_input(cmd, Some(data), timeout).map_err(|e| e.to_string())
+    let cmd = sandbox::helper(FLAG, args.iter().map(OsString::from));
+    let limits = sandbox::Limits {
+        timeout,
+        stdin: sandbox::Input::Bytes(&data),
+        ..sandbox::Limits::default()
+    };
+    sandbox::run_with(cmd, limits).map_err(|e| e.to_string())
 }
 
 /// Renders the font view. Errors become `cannot read font: ...` before anything is

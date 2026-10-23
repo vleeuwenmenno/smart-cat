@@ -46,6 +46,7 @@ Not supported: `.rar` (no pure Rust reader exists, so it stays a hex dump), `.is
 - A compressed tarball stops after `max_decompressed_bytes` of [decompressed data](configuration.md#defaults), with a note. A zip bomb costs nothing, since file data is never decompressed.
 - Names are untrusted. Control characters and escape sequences are shown as `^[` and `^J`, and one entry is always one row. Names such as `../../etc/passwd` or `/abs/path` are shown as stored (`../`, `/`), so traversal is visible. Nesting deeper than 64 levels is folded into one name.
 - Zip and 7z need seeking: a file is reopened by path, and a pipe is buffered in memory up to 256 MiB.
+- 7z headers are parsed in a child process (`scat --internal-7z`, the archive on standard input), with the same limits as the [PDF helper](pdf.md): sevenz-rust2 can panic on hostile headers, which would abort a release build. Before parsing, the end header that the 32-byte start header points to must lie inside the file and be at most 64 MiB; otherwise `not a valid 7z archive: the header lies outside the file`.
 - A corrupt archive is an error (`scat: NAME: not a valid zip archive: ...`) and scat goes on with the next file. A tar that breaks after some entries shows those entries and a note.
 
 ## Options and config

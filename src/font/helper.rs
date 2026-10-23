@@ -5,7 +5,7 @@
 //! - `scat --internal-font thumb SIDE`: a directory thumbnail as a PNG.
 //!
 //! Only this code parses and shapes fonts (read-fonts, skrifa, harfrust, resvg). It is
-//! started by [`crate::pdf::sandbox`] with the same limits as the PDF helper, since a
+//! started by [`crate::sandbox`] with the same limits as the PDF helper, since a
 //! malformed font can make a parser panic, which aborts a release build. Errors go to
 //! stderr as one line and exit with status 2.
 

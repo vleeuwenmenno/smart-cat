@@ -12,6 +12,7 @@ use std::io::{self, Cursor, Read, Seek, Write};
 use std::path::Path;
 use std::rc::Rc;
 
+use serde::{Deserialize, Serialize};
 use unicode_width::UnicodeWidthStr;
 
 use crate::decompress;
@@ -77,7 +78,7 @@ pub struct Source<'a> {
     pub size: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct Date {
     year: i32,
     month: u32,
@@ -106,7 +107,7 @@ impl Display for Date {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum ItemKind {
     Dir,
     File { executable: bool },
@@ -114,7 +115,7 @@ enum ItemKind {
     Hardlink(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Item {
     path: String,
     kind: ItemKind,
@@ -238,9 +239,7 @@ fn scan(format: Format, name: &str, source: Source, opts: &Options) -> io::Resul
             })
         }
         Format::SevenZ => {
-            let (reader, size) = seekable(source)?;
-            let mut section = Section::new(opts.max_entries);
-            scan_sevenz(reader, &mut section)?;
+            let (section, size) = scan_sevenz_sandboxed(source, opts.max_entries)?;
             Ok(Listing {
                 label: "7z archive".into(),
                 packed: size,
@@ -368,7 +367,141 @@ fn scan_zip<R: Read + Seek>(reader: R, section: &mut Section) -> io::Result<()> 
     Ok(())
 }
 
+/// What the 7z helper sends back: a [`Section`] without its title and error.
+#[derive(Serialize, Deserialize)]
+struct SevenZListing {
+    items: Vec<Item>,
+    entries: u64,
+    bytes: u64,
+    limited: bool,
+}
+
+/// Lists a 7z archive in the sandboxed helper (`scat --internal-7z KEEP`, the archive
+/// on standard input): sevenz-rust2 can panic on hostile headers, which would abort a
+/// release build. Returns the section and the archive size.
+fn scan_sevenz_sandboxed(source: Source, keep: usize) -> io::Result<(Section, Option<u64>)> {
+    use crate::sandbox;
+    let cmd = sandbox::helper(sandbox::SEVENZ_FLAG, [keep.to_string()]);
+    let file;
+    let data;
+    let (stdin, size) = match source.path {
+        Some(path) => {
+            file = File::open(path)?;
+            let size = file.metadata()?.len();
+            (sandbox::Input::File(&file), size)
+        }
+        None => {
+            let mut buf = Vec::new();
+            source.reader.take(BUFFER_LIMIT + 1).read_to_end(&mut buf)?;
+            if buf.len() as u64 > BUFFER_LIMIT {
+                return Err(io::Error::other(format!(
+                    "too large to list from a pipe (over {})",
+                    human_size(BUFFER_LIMIT)
+                )));
+            }
+            data = buf;
+            (sandbox::Input::Bytes(&data), data.len() as u64)
+        }
+    };
+    let out = sandbox::run_with(
+        cmd,
+        sandbox::Limits {
+            stdin,
+            ..sandbox::Limits::default()
+        },
+    )
+    .map_err(|err| match err {
+        // The helper's own message already says "not a valid 7z archive: ...".
+        sandbox::RunError::Failed(message) if !message.is_empty() => {
+            io::Error::new(io::ErrorKind::InvalidData, message)
+        }
+        other => bad("7z", other),
+    })?;
+    let listing: SevenZListing =
+        serde_json::from_slice(&out).map_err(|err| bad("7z", format!("helper output: {err}")))?;
+    let mut section = Section::new(keep);
+    section.items = listing.items;
+    section.items.truncate(section.keep);
+    section.entries = listing.entries;
+    section.bytes = listing.bytes;
+    section.limited = listing.limited;
+    Ok((section, Some(size)))
+}
+
+/// Runs the 7z helper when scat was started as one; `None` for a normal run.
+pub fn internal_main() -> Option<i32> {
+    let mut args = std::env::args_os().skip(1);
+    if args.next()? != crate::sandbox::SEVENZ_FLAG {
+        return None;
+    }
+    crate::sandbox::report_panics("7z parser");
+    let keep = args
+        .next()
+        .and_then(|a| a.into_string().ok())
+        .and_then(|a| a.parse().ok())
+        .unwrap_or(0);
+    let result = crate::sandbox::stdin_file().and_then(|file| {
+        let mut section = Section::new(keep);
+        scan_sevenz(Box::new(file), &mut section)?;
+        let listing = SevenZListing {
+            items: section.items,
+            entries: section.entries,
+            bytes: section.bytes,
+            limited: section.limited,
+        };
+        serde_json::to_vec(&listing).map_err(io::Error::other)
+    });
+    match result {
+        Ok(json) => {
+            let mut stdout = io::stdout().lock();
+            Some(
+                if stdout
+                    .write_all(&json)
+                    .and_then(|()| stdout.flush())
+                    .is_ok()
+                {
+                    0
+                } else {
+                    1
+                },
+            )
+        }
+        Err(err) => {
+            eprintln!("scat: {}", crate::util::io_message(&err));
+            Some(2)
+        }
+    }
+}
+
+/// Size of the 7z signature header: signature, version, CRC, then the offset, size and
+/// CRC of the next (end) header.
+const SEVENZ_START_HEADER: u64 = 32;
+/// Largest end header accepted; real ones are a few KiB to a few MiB.
+const SEVENZ_MAX_HEADER: u64 = 64 * 1024 * 1024;
+
+/// Checks that the end header the start header points to lies inside the file and has
+/// a sane size, before sevenz-rust2 allocates a buffer of that size.
+fn check_sevenz_header(reader: &mut dyn ReadSeek) -> io::Result<()> {
+    let len = reader.seek(io::SeekFrom::End(0))?;
+    reader.seek(io::SeekFrom::Start(0))?;
+    let mut start = [0u8; SEVENZ_START_HEADER as usize];
+    reader
+        .read_exact(&mut start)
+        .map_err(|_| bad("7z", "the file is too short"))?;
+    reader.seek(io::SeekFrom::Start(0))?;
+    let offset = u64::from_le_bytes(start[12..20].try_into().unwrap_or_default());
+    let size = u64::from_le_bytes(start[20..28].try_into().unwrap_or_default());
+    let end = SEVENZ_START_HEADER
+        .checked_add(offset)
+        .and_then(|v| v.checked_add(size));
+    match end {
+        Some(end) if end <= len && size <= SEVENZ_MAX_HEADER => Ok(()),
+        _ => Err(bad("7z", "the header lies outside the file")),
+    }
+}
+
 fn scan_sevenz(mut reader: Box<dyn ReadSeek>, section: &mut Section) -> io::Result<()> {
+    check_sevenz_header(&mut reader)?;
     let archive = sevenz_rust2::Archive::read(&mut reader, &sevenz_rust2::Password::empty())
         .map_err(|e| bad("7z", e))?;
     for entry in &archive.files {

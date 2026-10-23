@@ -202,6 +202,21 @@ fn xlsx(path: &Path) {
     );
 }
 
+/// An OLE compound file with a `Workbook` stream holding `records` (BIFF records:
+/// type, length, data), the container of an `.xls` file.
+/// Written under a temporary name first: tests run in parallel and read the fixture
+/// while another test rewrites it.
+fn xls(path: &Path, records: &[u8]) {
+    let temp = path.with_extension(format!("{:?}.tmp", std::thread::current().id()));
+    let mut book = cfb::create(&temp).unwrap();
+    let mut stream = book.create_stream("Workbook").unwrap();
+    stream.write_all(records).unwrap();
+    drop(stream);
+    book.flush().unwrap();
+    drop(book);
+    std::fs::rename(&temp, path).unwrap();
+}
+
 /// Written once per test binary: tests run in parallel and must not rewrite files
 /// another test is reading.
 fn fixtures() -> PathBuf {
@@ -220,6 +235,9 @@ fn make_fixtures() -> PathBuf {
     std::fs::write(dir.join("bad.docx"), b"PK\x03\x04 this is not really a zip").unwrap();
     // A zip that is not a document at all.
     zip_file(&dir.join("hollow.docx"), &[("readme.txt", "hi")]);
+    // A CodePage record (0x0042) without its two data bytes: calamine 0.36 indexes past
+    // the end of the record and panics, which aborts a release build.
+    xls(&dir.join("panic.xls"), &[0x42, 0x00, 0x00, 0x00]);
     std::fs::write(
         dir.join("cut.xlsx"),
         b"PK\x03\x04\x14\0\0\0\x08\0 cut short",
@@ -369,7 +387,7 @@ fn piped_output_is_the_input() {
 #[test]
 fn corrupt_documents_give_a_clean_error_and_scat_continues() {
     let dir = fixtures();
-    for name in ["bad.docx", "hollow.docx", "cut.xlsx"] {
+    for name in ["bad.docx", "hollow.docx", "cut.xlsx", "panic.xls"] {
         let out = run(&["-f", "--color=never", name, "notes.odt"], &dir);
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(
@@ -380,6 +398,52 @@ fn corrupt_documents_give_a_clean_error_and_scat_continues() {
         assert_eq!(out.status.code(), Some(1));
         assert!(String::from_utf8_lossy(&out.stdout).contains("Meeting notes"));
     }
+}
+
+#[test]
+fn sparse_spreadsheets_do_not_allocate_the_whole_grid() {
+    // Two cells at A1 and XFD1048576: a dense range would be 2^34 cells (hundreds of
+    // GiB). Only the shown corner is built; the rest is a note.
+    let dir = fixtures();
+    let sheet = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+<row r="1"><c r="A1"><v>1</v></c></row><row r="1048576"><c r="XFD1048576"><v>2</v></c></row></sheetData></worksheet>"#;
+    let workbook = r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>
+<sheet name="Sparse" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>"#;
+    zip_file(
+        &dir.join("sparse.xlsx"),
+        &[
+            ("[Content_Types].xml", "<Types/>"),
+            ("_rels/.rels", ROOT_RELS),
+            ("xl/workbook.xml", workbook),
+            ("xl/_rels/workbook.xml.rels", rels),
+            ("xl/worksheets/sheet1.xml", sheet),
+        ],
+    );
+    let started = std::time::Instant::now();
+    let text = rendered(&dir, "sparse.xlsx");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert!(text.contains("more rows"), "{text}");
+    assert!(text.contains("16320 more columns"), "{text}");
+}
+
+#[test]
+fn a_spreadsheet_parser_crash_stays_in_the_helper() {
+    let dir = fixtures();
+    let out = run(&["-f", "--color=never", "panic.xls", "stock.xlsx"], &dir);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        err.lines().next().unwrap_or(""),
+        "scat: panic.xls: cannot read document: the spreadsheet parser crashed",
+        "{err}"
+    );
+    assert_eq!(err.lines().count(), 1, "{err}");
+    assert_eq!(out.status.code(), Some(1));
+    // The next file is still converted (in its own helper).
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Excel workbook (xlsx), 2 sheets"), "{text}");
 }
 
 #[test]

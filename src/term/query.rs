@@ -6,6 +6,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
@@ -25,8 +26,43 @@ pub struct Capabilities {
     pub cell_pixels: Option<(u16, u16)>,
     /// Text area size in pixels (width, height).
     pub window_pixels: Option<(u16, u16)>,
+    /// The terminal's window size (`TIOCGWINSZ`) when it was queried. The cell size is
+    /// only valid for this window size: a font zoom, a move to a monitor with another
+    /// scale, or a terminal that has not settled on its scale yet all change it.
+    pub winsize: Option<WinSize>,
     pub background: Option<(u8, u8, u8)>,
     pub elapsed: Duration,
+}
+
+/// `TIOCGWINSZ`: columns, rows, and the text area in pixels (0 when not reported).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WinSize {
+    pub cols: u16,
+    pub rows: u16,
+    pub xpixel: u16,
+    pub ypixel: u16,
+}
+
+impl WinSize {
+    fn of<Fd: std::os::fd::AsFd>(fd: Fd) -> Option<Self> {
+        let size = tcgetwinsize(fd).ok()?;
+        Some(Self {
+            cols: size.ws_col,
+            rows: size.ws_row,
+            xpixel: size.ws_xpixel,
+            ypixel: size.ws_ypixel,
+        })
+    }
+
+    /// The window size of the controlling terminal right now. One `ioctl`, no query.
+    pub fn current() -> Option<Self> {
+        let tty = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOCTTY | libc::O_NONBLOCK)
+            .open("/dev/tty")
+            .ok()?;
+        Self::of(&tty)
+    }
 }
 
 impl Capabilities {
@@ -118,15 +154,18 @@ pub fn query(timeout: Duration) -> io::Result<Capabilities> {
     tcsetattr(&tty, OptionalActions::Now, &raw)?;
     let guard = RawGuard { tty: &tty, saved };
 
-    let mut caps = Capabilities::default();
-    if let Ok(size) = tcgetwinsize(&tty)
-        && size.ws_xpixel > 0
-        && size.ws_ypixel > 0
-        && size.ws_col > 0
-        && size.ws_row > 0
+    let mut caps = Capabilities {
+        winsize: WinSize::of(&tty),
+        ..Capabilities::default()
+    };
+    if let Some(size) = caps.winsize
+        && size.xpixel > 0
+        && size.ypixel > 0
+        && size.cols > 0
+        && size.rows > 0
     {
-        caps.window_pixels = Some((size.ws_xpixel, size.ws_ypixel));
-        caps.cell_pixels = Some((size.ws_xpixel / size.ws_col, size.ws_ypixel / size.ws_row));
+        caps.window_pixels = Some((size.xpixel, size.ypixel));
+        caps.cell_pixels = Some((size.xpixel / size.cols, size.ypixel / size.rows));
     }
 
     (&tty).write_all(&request())?;

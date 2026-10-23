@@ -418,6 +418,74 @@ fn corrupt_archives_are_errors_and_scat_continues() {
 }
 
 #[test]
+fn sevenz_header_sizes_are_checked_before_parsing() {
+    // A 32-byte 7z file whose end header claims 2^63 bytes: sevenz-rust2 0.20 panics
+    // with a capacity overflow allocating it, which aborts a release build.
+    let d = dir("sevenz-huge-header");
+    let mut start = Vec::new();
+    start.extend_from_slice(&0u64.to_le_bytes());
+    start.extend_from_slice(&(1u64 << 63).to_le_bytes());
+    start.extend_from_slice(&0u32.to_le_bytes());
+    let mut file = b"7z\xbc\xaf\x27\x1c\0\x04".to_vec();
+    file.extend_from_slice(&crc32(&start).to_le_bytes());
+    file.extend_from_slice(&start);
+    assert_eq!(file.len(), 32);
+    std::fs::write(d.join("huge.7z"), &file).unwrap();
+    std::fs::write(d.join("after.txt"), "still here\n").unwrap();
+    let out = scat(&d, &["-f", "--color=never", "huge.7z", "after.txt"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "scat: huge.7z: not a valid 7z archive: the header lies outside the file\n"
+    );
+    assert!(text(&out).contains("still here"));
+}
+
+#[test]
+fn sevenz_from_a_pipe_is_listed_through_the_helper() {
+    let d = dir("sevenz-pipe");
+    let mut sz = sevenz_rust2::ArchiveWriter::create(d.join("p.7z")).unwrap();
+    sz.push_archive_entry(
+        sevenz_rust2::ArchiveEntry::new_file("x/y.txt"),
+        Some(&b"abc"[..]),
+    )
+    .unwrap();
+    sz.finish().unwrap();
+    let out = Command::new(SCAT)
+        .args(["-f", "--color=never", "-"])
+        .current_dir(&d)
+        .env("HOME", &d)
+        .env("LC_ALL", "C.UTF-8")
+        .env("COLUMNS", "80")
+        .stdin(std::fs::File::open(d.join("p.7z")).unwrap())
+        .output()
+        .unwrap();
+    let got = text(&out);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(got.contains("└── x/\n    └── y.txt  3 B"), "{got}");
+}
+
+/// CRC-32 (IEEE), for the 7z start header.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &b in data {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+#[test]
 fn raw_and_hex_keep_the_bytes() {
     let d = dir("renderers");
     std::fs::write(d.join("a.tar.gz"), gzip(&sample_tar())).unwrap();

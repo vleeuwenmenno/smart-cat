@@ -1,7 +1,7 @@
 //! The PDF helper process: `scat --internal-pdf info FILE` and
 //! `scat --internal-pdf render FILE PAGE MAX_WIDTH MAX_HEIGHT`.
 //!
-//! Only this code runs hayro. It is started by [`super::sandbox::run`] with resource
+//! Only this code runs hayro. It is started by [`crate::sandbox::run`] with resource
 //! limits; errors go to stderr as one line and exit with status 2.
 
 use std::ffi::OsString;
@@ -21,7 +21,7 @@ const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 /// Largest rendered side in pixels (vello_cpu pixmaps are limited to u16).
 const MAX_SIDE: f32 = 8192.0;
 
-/// Entry point for the helper; `args` are the arguments after [`super::sandbox::FLAG`].
+/// Entry point for the helper; `args` are the arguments after [`crate::sandbox::PDF_FLAG`].
 pub fn main(args: Vec<OsString>) -> i32 {
     match run(&args) {
         Ok(bytes) => {

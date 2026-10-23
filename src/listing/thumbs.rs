@@ -4,11 +4,18 @@
 //! Lookup order for one file: a fresh freedesktop thumbnail (made by a file manager),
 //! then scat's cache, then generating one. Generated thumbnails (and "this file has
 //! none") are stored in scat's cache, keyed by path, size and modification time.
+//!
+//! Cache files are read and written defensively. scat's cache directory is used only
+//! when it is a real directory (not a symlink) owned by the user with mode 0700, and
+//! its parent is not writable by others. Every cache file is opened with `O_NOFOLLOW |
+//! O_NONBLOCK` (a FIFO cannot block the open) and must be a regular file of a sane size;
+//! files in scat's own cache must also be owned by the user. [`prune`] keeps the cache
+//! small with the same rules.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -126,7 +133,8 @@ pub fn thumbnail(cache: &Cache, target: &Target, source: Source) -> Option<RgbaI
         .own
         .as_ref()
         .map(|dir| dir.join(format!("{}.png", key(target))));
-    if let Some(file) = &file {
+    let readable = cache.own.as_deref().is_some_and(trusted_dir);
+    if let Some(file) = file.as_ref().filter(|_| readable) {
         match read_own(file) {
             Lookup::Hit(img) => return Some(img),
             Lookup::Nothing => return None,
@@ -184,7 +192,7 @@ enum Lookup {
 }
 
 fn read_own(file: &Path) -> Lookup {
-    let Ok(data) = read_capped(file, MAX_THUMB_FILE) else {
+    let Ok(data) = read_cache_file(file, MAX_THUMB_FILE, true) else {
         return Lookup::Miss;
     };
     if data.is_empty() {
@@ -223,6 +231,7 @@ fn store(dir: &Path, file: &Path, img: Option<&RgbaImage>) {
         .mode(0o700)
         .create(dir)
         .is_err()
+        || !trusted_dir(dir)
     {
         return;
     }
@@ -237,6 +246,7 @@ fn store(dir: &Path, file: &Path, img: Option<&RgbaImage>) {
         .write(true)
         .create_new(true)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(&tmp)
         .and_then(|mut f| f.write_all(&data));
     if written.is_err() || fs::rename(&tmp, file).is_err() {
@@ -309,13 +319,61 @@ fn generate(target: &Target, source: Source) -> Made {
     }
 }
 
+/// Reads a source file (symlinks followed: the thumbnail is of the target). Opened
+/// non-blocking and read only when it is a regular file, so a FIFO swapped in after
+/// the listing cannot hang scat.
 fn read_capped(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    read_regular(file, max, false)
+}
+
+/// Reads a cache file: not through a symlink, non-blocking, a regular file of at most
+/// `max` bytes, and owned by the user when `own`.
+fn read_cache_file(path: &Path, max: u64, own: bool) -> std::io::Result<Vec<u8>> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    read_regular(file, max, own)
+}
+
+fn read_regular(file: File, max: u64, own: bool) -> std::io::Result<Vec<u8>> {
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    if own && meta.uid() != uid() {
+        return Err(std::io::Error::other("not owned by the user"));
+    }
+    if meta.len() > max {
+        return Err(std::io::Error::other("too large"));
+    }
     let mut data = Vec::new();
-    File::open(path)?.take(max + 1).read_to_end(&mut data)?;
+    file.take(max + 1).read_to_end(&mut data)?;
     if data.len() as u64 > max {
         return Err(std::io::Error::other("too large"));
     }
     Ok(data)
+}
+
+fn uid() -> u32 {
+    rustix::process::geteuid().as_raw()
+}
+
+/// Whether scat's cache directory `dir` may be used: a real directory owned by the user
+/// with no access for others, inside a parent that is a real directory others cannot
+/// write to (so `dir` cannot be swapped for a symlink).
+fn trusted_dir(dir: &Path) -> bool {
+    let private = fs::symlink_metadata(dir)
+        .is_ok_and(|m| m.file_type().is_dir() && m.uid() == uid() && m.mode() & 0o077 == 0);
+    let parent_safe = dir.parent().is_some_and(|parent| {
+        fs::symlink_metadata(parent)
+            .is_ok_and(|m| m.file_type().is_dir() && m.uid() == uid() && m.mode() & 0o022 == 0)
+    });
+    private && parent_safe
 }
 
 /// A thumbnail from freedesktop's shared cache, when one exists for this file and its
@@ -331,7 +389,7 @@ fn freedesktop(cache: &Cache, target: &Target) -> Option<RgbaImage> {
         .as_secs()
         .to_string();
     for size in ["large", "x-large", "normal", "xx-large"] {
-        let Ok(data) = read_capped(&dir.join(size).join(&name), MAX_THUMB_FILE) else {
+        let Ok(data) = read_cache_file(&dir.join(size).join(&name), MAX_THUMB_FILE, false) else {
             continue;
         };
         let text = png_text(&data);
@@ -347,6 +405,142 @@ fn freedesktop(cache: &Cache, target: &Target) -> Option<RgbaImage> {
         }
     }
     None
+}
+
+/// Cache entries not modified for this long are removed by [`prune`].
+pub const PRUNE_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// [`prune`] removes the oldest entries until the cache is at most this large.
+pub const PRUNE_MAX_BYTES: u64 = 256 << 20;
+/// [`prune`] runs at most this often.
+pub const PRUNE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Timestamp file of the last [`prune`], inside the cache directory.
+const PRUNE_STAMP: &str = ".pruned";
+
+/// What one [`prune_dir`] did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Pruned {
+    pub removed: usize,
+    pub kept: usize,
+    pub kept_bytes: u64,
+}
+
+/// Prunes scat's thumbnail cache when the last prune was more than [`PRUNE_INTERVAL`]
+/// ago (by the timestamp file's modification time): entries older than [`PRUNE_AGE`]
+/// go, then the oldest until the rest fits [`PRUNE_MAX_BYTES`]. Cheap when not due: one
+/// `lstat`. Errors are ignored; the cache is only an optimisation.
+pub fn prune(cache: &Cache) {
+    let Some(dir) = cache.own.as_deref() else {
+        return;
+    };
+    let now = SystemTime::now();
+    let stamp = dir.join(PRUNE_STAMP);
+    if let Ok(meta) = fs::symlink_metadata(&stamp)
+        && meta.is_file()
+        && let Ok(when) = meta.modified()
+        && now
+            .duration_since(when)
+            .is_ok_and(|age| age < PRUNE_INTERVAL)
+    {
+        return;
+    }
+    if prune_dir(dir, now, PRUNE_AGE, PRUNE_MAX_BYTES).is_ok() {
+        // Replaced, not rewritten: a symlink or FIFO at the stamp's name is not
+        // followed or opened.
+        let tmp = dir.join(format!("{PRUNE_STAMP}.{}.tmp", std::process::id()));
+        let written = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&tmp)
+            .and_then(|mut f| writeln!(f, "{}", unix_secs(now)));
+        if written.is_err() || fs::rename(&tmp, &stamp).is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+    }
+}
+
+fn unix_secs(time: SystemTime) -> i64 {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(e) => -(e.duration().as_secs() as i64),
+    }
+}
+
+/// Removes entries of the cache directory `dir` older than `max_age`, then the oldest
+/// until the rest is at most `max_bytes`. Only regular files owned by the user, directly
+/// in `dir`, are looked at or removed; the directory must pass [`trusted_dir`] and is
+/// opened once without following symlinks, and every entry is looked at and removed
+/// relative to that open directory, so nothing outside it can be reached.
+pub fn prune_dir(
+    dir: &Path,
+    now: SystemTime,
+    max_age: Duration,
+    max_bytes: u64,
+) -> std::io::Result<Pruned> {
+    use rustix::fs::{AtFlags, FileType, Mode, OFlags};
+    if !trusted_dir(dir) {
+        return Err(std::io::Error::other("cache directory is not private"));
+    }
+    let fd = rustix::fs::open(
+        dir,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    let st = rustix::fs::fstat(&fd)?;
+    if st.st_uid != uid() || st.st_mode & 0o077 != 0 {
+        return Err(std::io::Error::other("cache directory is not private"));
+    }
+    let cutoff = unix_secs(now).saturating_sub(max_age.as_secs() as i64);
+    // (mtime, size, name) of the entries that stay after the age pass.
+    let mut kept: Vec<(i64, u64, std::ffi::CString)> = Vec::new();
+    let mut removed = 0;
+    for entry in rustix::fs::Dir::read_from(&fd)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name.to_bytes() == b"."
+            || name.to_bytes() == b".."
+            || name.to_bytes() == PRUNE_STAMP.as_bytes()
+        {
+            continue;
+        }
+        let Ok(st) = rustix::fs::statat(&fd, name, AtFlags::SYMLINK_NOFOLLOW) else {
+            continue;
+        };
+        if FileType::from_raw_mode(st.st_mode) != FileType::RegularFile || st.st_uid != uid() {
+            continue;
+        }
+        let mtime = st.st_mtime;
+        if mtime < cutoff {
+            if rustix::fs::unlinkat(&fd, name, AtFlags::empty()).is_ok() {
+                removed += 1;
+            }
+            continue;
+        }
+        kept.push((mtime, st.st_size as u64, name.to_owned()));
+    }
+    let mut total: u64 = kept.iter().map(|(_, size, _)| size).sum();
+    if total > max_bytes {
+        // Oldest first.
+        kept.sort();
+        let mut drop_count = 0;
+        for (_, size, name) in &kept {
+            if total <= max_bytes {
+                break;
+            }
+            if rustix::fs::unlinkat(&fd, name.as_c_str(), AtFlags::empty()).is_ok() {
+                total -= size;
+                removed += 1;
+            }
+            drop_count += 1;
+        }
+        kept.drain(..drop_count);
+    }
+    Ok(Pruned {
+        removed,
+        kept: kept.len(),
+        kept_bytes: total,
+    })
 }
 
 /// `file://` URI of an absolute path, escaped like GLib's `g_filename_to_uri`.
@@ -571,6 +765,166 @@ mod tests {
         let stale = with_text(&png(16, 12, [0, 255, 0, 255]), &[("Thumb::MTime", "1")]);
         fs::write(&thumb, stale).unwrap();
         assert!(freedesktop(&cache, &target).is_none());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    fn set_age(path: &Path, days: u64) {
+        let when = SystemTime::now() - Duration::from_secs(days * 24 * 60 * 60);
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(when)
+            .unwrap();
+    }
+
+    fn private_cache(name: &str) -> (PathBuf, Cache, PathBuf) {
+        let home = temp_dir(name);
+        let cache = Cache::under(Some(home.join("cache")));
+        let dir = home.join("cache/scat/thumbnails");
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .unwrap();
+        (home, cache, dir)
+    }
+
+    #[test]
+    fn prune_removes_old_entries_and_caps_the_size() {
+        let (home, _, dir) = private_cache("prune");
+        for (name, days, size) in [
+            ("old.png", 40, 10),
+            ("a.png", 3, 100),
+            ("b.png", 2, 100),
+            ("c.png", 1, 100),
+        ] {
+            fs::write(dir.join(name), vec![0u8; size]).unwrap();
+            set_age(&dir.join(name), days);
+        }
+        // Never touched: a symlink to a file outside, its target, and a subdirectory.
+        let outside = home.join("outside.png");
+        fs::write(&outside, b"keep me").unwrap();
+        set_age(&outside, 400);
+        std::os::unix::fs::symlink(&outside, dir.join("link.png")).unwrap();
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/old.png"), b"x").unwrap();
+        set_age(&dir.join("sub/old.png"), 400);
+
+        let now = SystemTime::now();
+        let done = prune_dir(&dir, now, PRUNE_AGE, 250).unwrap();
+        // old.png by age, then a.png (the oldest) to get 300 bytes under 250.
+        assert_eq!(
+            done,
+            Pruned {
+                removed: 2,
+                kept: 2,
+                kept_bytes: 200
+            }
+        );
+        let mut left: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["b.png", "c.png", "link.png", "sub"]);
+        assert_eq!(fs::read(&outside).unwrap(), b"keep me");
+        assert!(dir.join("sub/old.png").exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn prune_runs_once_a_day() {
+        let (home, cache, dir) = private_cache("prune-daily");
+        fs::write(dir.join("old.png"), b"x").unwrap();
+        set_age(&dir.join("old.png"), 40);
+        prune(&cache);
+        assert!(!dir.join("old.png").exists());
+        assert!(dir.join(PRUNE_STAMP).is_file());
+        // Due again only after a day: a new old entry stays for now.
+        fs::write(dir.join("old2.png"), b"x").unwrap();
+        set_age(&dir.join("old2.png"), 40);
+        prune(&cache);
+        assert!(dir.join("old2.png").exists());
+        set_age(&dir.join(PRUNE_STAMP), 2);
+        prune(&cache);
+        assert!(!dir.join("old2.png").exists());
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn untrusted_cache_directories_are_not_used() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = temp_dir("untrusted");
+        let file = home.join("pic.png");
+        fs::write(&file, png(4, 4, [255, 0, 0, 255])).unwrap();
+        let meta = fs::metadata(&file).unwrap();
+        let target = Target {
+            path: &file,
+            size: meta.len(),
+            modified: meta.modified().unwrap(),
+        };
+        // The thumbnails directory is a symlink to a world-writable directory.
+        let elsewhere = home.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        fs::set_permissions(&elsewhere, fs::Permissions::from_mode(0o777)).unwrap();
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(home.join("cache/scat"))
+            .unwrap();
+        std::os::unix::fs::symlink(&elsewhere, home.join("cache/scat/thumbnails")).unwrap();
+        let cache = Cache::under(Some(home.join("cache")));
+        // A FIFO at the entry's name would block a plain open forever.
+        let fifo = elsewhere.join(format!("{}.png", key(&target)));
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        assert!(thumbnail(&cache, &target, Source::Image { svg: false }).is_some());
+        // Nothing was written through the symlink, and pruning refuses the directory.
+        assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 1);
+        assert!(
+            prune_dir(
+                &home.join("cache/scat/thumbnails"),
+                SystemTime::now(),
+                PRUNE_AGE,
+                0
+            )
+            .is_err()
+        );
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn cache_reads_need_a_regular_file() {
+        let home = temp_dir("regular");
+        let fifo = home.join("fifo.png");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        // Returns at once instead of waiting for a writer.
+        assert!(read_cache_file(&fifo, MAX_THUMB_FILE, false).is_err());
+        assert!(read_capped(&fifo, MAX_THUMB_FILE).is_err());
+        let real = home.join("real.png");
+        fs::write(&real, b"data").unwrap();
+        let link = home.join("link.png");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(read_cache_file(&link, MAX_THUMB_FILE, false).is_err());
+        assert_eq!(
+            read_cache_file(&real, MAX_THUMB_FILE, true).unwrap(),
+            b"data"
+        );
+        assert!(read_cache_file(&real, 3, true).is_err());
         let _ = fs::remove_dir_all(&home);
     }
 }

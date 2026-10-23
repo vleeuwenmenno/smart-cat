@@ -28,6 +28,7 @@ mod pager;
 mod pdf;
 mod play;
 mod render;
+mod sandbox;
 mod sqlite;
 mod subtitles;
 mod table;
@@ -49,7 +50,11 @@ fn main() {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
-    if let Some(code) = pdf::internal_main() {
+    if let Some(code) = pdf::internal_main()
+        .or_else(office::internal_main)
+        .or_else(archive::internal_main)
+        .or_else(sqlite::internal_main)
+    {
         std::process::exit(code);
     }
     if let Some(code) = diagram::helper::internal_main() {

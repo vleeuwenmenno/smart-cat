@@ -9,6 +9,12 @@
 //! [`TTL`]: the background colour changes when the user switches theme, and that is
 //! picked up once the entry expires.
 //!
+//! The cell size changes much sooner: a font zoom, a move to a monitor with another
+//! scale, or a terminal that answered before it settled on its scale (foot reports
+//! twice the cell size for the first moments of a new window under a scaled
+//! compositor). So an entry also records the window size (`TIOCGWINSZ`) it was made
+//! for, and is only used while the window size is the same.
+//!
 //! The file is a few `key=value` lines. Anything unexpected (wrong owner, loose
 //! permissions, a symlink, unparsable text) is treated as a miss.
 
@@ -18,12 +24,12 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::query::Capabilities;
+use super::query::{Capabilities, WinSize};
 
 /// How long an entry is used.
 pub const TTL: Duration = Duration::from_secs(10 * 60);
 
-const HEADER: &str = "scat-term-cache 1";
+const HEADER: &str = "scat-term-cache 2";
 
 /// Identifies one terminal session: a hash of everything that changes what the
 /// terminal answers.
@@ -113,8 +119,9 @@ fn private(meta: &fs::Metadata) -> bool {
     meta.uid() == rustix::process::geteuid().as_raw() && meta.mode() & 0o077 == 0
 }
 
-/// Reads the entry for `key`, if one exists and is younger than [`TTL`].
-pub fn load(dir: &Path, key: &Key, now: SystemTime) -> Option<Entry> {
+/// Reads the entry for `key`, if one exists, is younger than [`TTL`], and was made for
+/// the window size `winsize` (the terminal's size now).
+pub fn load(dir: &Path, key: &Key, now: SystemTime, winsize: Option<WinSize>) -> Option<Entry> {
     let dir_meta = fs::symlink_metadata(dir).ok()?;
     if !dir_meta.is_dir() || !private(&dir_meta) {
         return None;
@@ -134,7 +141,7 @@ pub fn load(dir: &Path, key: &Key, now: SystemTime) -> Option<Entry> {
     let now = now.duration_since(UNIX_EPOCH).ok()?.as_secs();
     // A timestamp from the future (clock changed) is not trusted either.
     let age = Duration::from_secs(now.checked_sub(written)?);
-    (age < TTL).then_some(Entry { caps, age })
+    (age < TTL && caps.winsize == winsize).then_some(Entry { caps, age })
 }
 
 /// Writes the entry for `key`. Errors are for the caller to ignore: the cache is only
@@ -185,6 +192,12 @@ fn format(written: u64, caps: &Capabilities) -> String {
     if let Some((r, g, b)) = caps.background {
         text.push_str(&format!("background={r:02x}{g:02x}{b:02x}\n"));
     }
+    if let Some(size) = caps.winsize {
+        text.push_str(&format!(
+            "winsize={}x{}:{}x{}\n",
+            size.cols, size.rows, size.xpixel, size.ypixel
+        ));
+    }
     text
 }
 
@@ -211,6 +224,17 @@ fn parse(text: &str) -> Option<(u64, Capabilities)> {
                 let (w, h) = value.split_once('x')?;
                 caps.cell_pixels = Some((w.parse().ok()?, h.parse().ok()?));
             }
+            "winsize" => {
+                let (cells, pixels) = value.split_once(':')?;
+                let (cols, rows) = cells.split_once('x')?;
+                let (xpixel, ypixel) = pixels.split_once('x')?;
+                caps.winsize = Some(WinSize {
+                    cols: cols.parse().ok()?,
+                    rows: rows.parse().ok()?,
+                    xpixel: xpixel.parse().ok()?,
+                    ypixel: ypixel.parse().ok()?,
+                });
+            }
             "background" if value.len() == 6 => {
                 let channel = |i: usize| u8::from_str_radix(value.get(i..i + 2)?, 16).ok();
                 caps.background = Some((channel(0)?, channel(2)?, channel(4)?));
@@ -233,6 +257,14 @@ mod tests {
         dir
     }
 
+    /// foot at scale 1: 108x38 cells of 9x20 px.
+    const FOOT: Option<WinSize> = Some(WinSize {
+        cols: 108,
+        rows: 38,
+        xpixel: 972,
+        ypixel: 760,
+    });
+
     fn sample() -> Capabilities {
         Capabilities {
             answered: true,
@@ -240,6 +272,7 @@ mod tests {
             sixel: false,
             cell_pixels: Some((10, 21)),
             background: Some((0x1e, 0x1e, 0x2e)),
+            winsize: FOOT,
             ..Default::default()
         }
     }
@@ -264,7 +297,7 @@ mod tests {
         assert_eq!(mode(&dir), 0o700);
         assert_eq!(mode(&dir.join(key(42).file_name())), 0o600);
 
-        let entry = load(&dir, &key(42), now + Duration::from_secs(5)).unwrap();
+        let entry = load(&dir, &key(42), now + Duration::from_secs(5), FOOT).unwrap();
         assert_eq!(entry.age, Duration::from_secs(5));
         assert!(entry.caps.answered);
         assert!(entry.caps.kitty_graphics);
@@ -275,9 +308,43 @@ mod tests {
         // A terminal that did not answer is remembered too.
         let silent = Capabilities::default();
         store(&dir, &key(42), &silent, now).unwrap();
-        let entry = load(&dir, &key(42), now).unwrap();
+        let entry = load(&dir, &key(42), now, None).unwrap();
         assert!(!entry.caps.answered);
         assert_eq!(entry.caps.background, None);
+        fs::remove_dir_all(&runtime).unwrap();
+    }
+
+    #[test]
+    fn entries_are_only_used_for_the_same_window_size() {
+        let runtime = temp_dir("winsize");
+        let dir = runtime.join("scat");
+        let now = SystemTime::now();
+        // A new foot window under a scaled compositor answers with 18x39 cells (twice
+        // the real size) before it settles; that answer must not outlive the window
+        // size it came with, or every image after it is drawn twice too large.
+        let startup = WinSize {
+            cols: 183,
+            rows: 69,
+            xpixel: 3294,
+            ypixel: 2691,
+        };
+        let caps = Capabilities {
+            cell_pixels: Some((18, 39)),
+            winsize: Some(startup),
+            ..sample()
+        };
+        store(&dir, &key(1), &caps, now).unwrap();
+        assert!(load(&dir, &key(1), now, Some(startup)).is_some());
+        assert!(load(&dir, &key(1), now, FOOT).is_none());
+        // A font zoom keeps the pixel size but changes the cells, and the reverse for a
+        // move to a monitor with another scale.
+        let zoomed = WinSize {
+            cols: 91,
+            ..startup
+        };
+        assert!(load(&dir, &key(1), now, Some(zoomed)).is_none());
+        // No window size now, but one then (or the reverse): not the same terminal state.
+        assert!(load(&dir, &key(1), now, None).is_none());
         fs::remove_dir_all(&runtime).unwrap();
     }
 
@@ -287,10 +354,10 @@ mod tests {
         let dir = runtime.join("scat");
         let now = SystemTime::now();
         store(&dir, &key(1), &sample(), now).unwrap();
-        assert!(load(&dir, &key(1), now + TTL - Duration::from_secs(1)).is_some());
-        assert!(load(&dir, &key(1), now + TTL).is_none());
+        assert!(load(&dir, &key(1), now + TTL - Duration::from_secs(1), FOOT).is_some());
+        assert!(load(&dir, &key(1), now + TTL, FOOT).is_none());
         // Written "in the future": the clock was changed, do not trust it.
-        assert!(load(&dir, &key(1), now - Duration::from_secs(60)).is_none());
+        assert!(load(&dir, &key(1), now - Duration::from_secs(60), FOOT).is_none());
         fs::remove_dir_all(&runtime).unwrap();
     }
 
@@ -332,27 +399,29 @@ mod tests {
         let path = dir.join(key(1).file_name());
 
         fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
-        assert!(load(&dir, &key(1), now).is_none());
+        assert!(load(&dir, &key(1), now, FOOT).is_none());
 
         fs::remove_file(&path).unwrap();
         fs::write(&path, "garbage").unwrap();
         fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
-        assert!(load(&dir, &key(1), now).is_none());
+        assert!(load(&dir, &key(1), now, FOOT).is_none());
 
         // A symlink in place of the file is not followed.
         fs::remove_file(&path).unwrap();
         let elsewhere = runtime.join("elsewhere");
         fs::write(&elsewhere, format(0, &sample())).unwrap();
         std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
-        assert!(load(&dir, &key(1), now).is_none());
+        assert!(load(&dir, &key(1), now, FOOT).is_none());
         fs::remove_dir_all(&runtime).unwrap();
     }
 
     #[test]
     fn parse_rejects_unknown_lines() {
-        assert!(parse("scat-term-cache 1\ntime=5\nanswered=1\n").is_some());
-        assert!(parse("scat-term-cache 1\ntime=5\nversion=\x1b]0;x\n").is_none());
-        assert!(parse("scat-term-cache 2\ntime=5\n").is_none());
-        assert!(parse("scat-term-cache 1\nanswered=1\n").is_none());
+        assert!(parse("scat-term-cache 2\ntime=5\nanswered=1\n").is_some());
+        assert!(parse("scat-term-cache 2\ntime=5\nversion=\x1b]0;x\n").is_none());
+        // Version 1 entries had no window size, so their cell size cannot be trusted.
+        assert!(parse("scat-term-cache 1\ntime=5\n").is_none());
+        assert!(parse("scat-term-cache 2\nanswered=1\n").is_none());
+        assert!(parse("scat-term-cache 2\ntime=5\nwinsize=80x24\n").is_none());
     }
 }

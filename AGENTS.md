@@ -36,7 +36,8 @@ Run `make check` before handing work back.
 | `src/audio.rs` + `src/waveform.rs` | audio info view (lofty tags, symphonia peaks, braille/ASCII waveform) |
 | `src/listing.rs` + `src/listing/` | directory listing: tiles (`tiles.rs`), icons (`icons.rs`), thumbnails and their cache (`thumbs.rs`), grid and long views |
 | `src/play.rs` | `--play`: hands audio and video to mpv |
-| `src/pdf/` | PDF view: info header, `--pages` parser, page drawing and text; `helper.rs` runs hayro in a child (`--internal-pdf`), `sandbox.rs` adds rlimits and the timeout |
+| `src/pdf/` | PDF view: info header, `--pages` parser, page drawing and text; `helper.rs` runs hayro in a child (`--internal-pdf`) |
+| `src/sandbox.rs` | child processes for untrusted parsers (PDF, spreadsheets, 7z, SQLite): hidden `--internal-*` flags, rlimits, timeout, stdin input |
 | `src/office/` | office documents as markdown: `docx.rs`, `pptx.rs`, `odf.rs` (odt/odp) and `sheets.rs` (calamine) build markdown with `md.rs`; caps on parts, rows, slides and output |
 | `src/notebook.rs` | Jupyter notebook view (nbformat 4): cells and outputs through hooks for markdown, highlighting, images and text cleaning (wired in `render::render_notebook`); capped base64 and output lines |
 | `src/subtitles.rs` | subtitle view (srt, vtt, ass, ssa): decoding (UTF-8, UTF-16 BOM, Windows-1252), parsers, overview warnings, cue list |

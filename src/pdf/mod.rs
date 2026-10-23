@@ -7,7 +7,6 @@
 
 mod helper;
 mod pages;
-pub mod sandbox;
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::image::{Screen, ShowOptions};
 use crate::input::{Input, InputKind, Source};
+use crate::sandbox;
 use crate::util::{human_size, which};
 
 pub use pages::PageSpec;
@@ -48,7 +48,7 @@ pub struct Info {
 /// Runs the helper when scat was started as one; `None` for a normal run.
 pub fn internal_main() -> Option<i32> {
     let mut args = std::env::args_os().skip(1);
-    if args.next()? != sandbox::FLAG {
+    if args.next()? != sandbox::PDF_FLAG {
         return None;
     }
     Some(helper::main(args.collect()))
@@ -164,10 +164,10 @@ pub fn render<W: Write>(
 
 /// Info from the hayro helper, else from `pdfinfo`. An unreadable file is an error.
 fn read_info(path: &Path) -> io::Result<Info> {
-    let hayro = sandbox::run(sandbox::helper([
-        std::ffi::OsStr::new("info"),
-        path.as_os_str(),
-    ]))
+    let hayro = sandbox::run(sandbox::helper(
+        sandbox::PDF_FLAG,
+        [std::ffi::OsStr::new("info"), path.as_os_str()],
+    ))
     .map_err(|e| e.to_string())
     .and_then(|bytes| serde_json::from_slice::<Info>(&bytes).map_err(|e| e.to_string()));
     let hayro_error = match hayro {
@@ -365,13 +365,16 @@ pub fn render_page_within(
     let w = box_px.0.max(16).to_string();
     let h = box_px.1.max(16).to_string();
     let hayro = sandbox::run_within(
-        sandbox::helper([
-            std::ffi::OsStr::new("render"),
-            path.as_os_str(),
-            page_arg.as_ref(),
-            w.as_ref(),
-            h.as_ref(),
-        ]),
+        sandbox::helper(
+            sandbox::PDF_FLAG,
+            [
+                std::ffi::OsStr::new("render"),
+                path.as_os_str(),
+                page_arg.as_ref(),
+                w.as_ref(),
+                h.as_ref(),
+            ],
+        ),
         timeout,
     );
     let hayro_error = match hayro {

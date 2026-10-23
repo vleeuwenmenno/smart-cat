@@ -57,7 +57,12 @@ pub fn capabilities(stdout_tty: bool) -> Option<query::Capabilities> {
     }
     let cache = cache::dir().zip(cache::Key::current());
     if let Some((dir, key)) = &cache
-        && let Some(entry) = cache::load(dir, key, std::time::SystemTime::now())
+        && let Some(entry) = cache::load(
+            dir,
+            key,
+            std::time::SystemTime::now(),
+            query::WinSize::current(),
+        )
     {
         return entry.caps.answered.then_some(entry.caps);
     }

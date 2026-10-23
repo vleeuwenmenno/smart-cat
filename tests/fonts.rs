@@ -473,9 +473,12 @@ fn directory_tiles_get_a_font_thumbnail() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // Dot files (the daily `.pruned` stamp) are cache bookkeeping, not thumbnails.
     let thumbs: Vec<_> = std::fs::read_dir(cache.join("scat").join("thumbnails"))
         .unwrap()
-        .map(|e| e.unwrap().metadata().unwrap().len())
+        .map(|e| e.unwrap())
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .map(|e| e.metadata().unwrap().len())
         .collect();
     assert_eq!(thumbs.len(), 1);
     assert!(thumbs[0] > 0, "the font got no thumbnail");

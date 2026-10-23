@@ -105,14 +105,19 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
     println!("\nterminal query (/dev/tty)");
     let cache = term::cache::dir().zip(term::cache::Key::current());
     match (&cache, term::cache::dir()) {
-        (Some((dir, key)), _) => match term::cache::load(dir, key, SystemTime::now()) {
-            Some(entry) => println!(
-                "  cache: entry from {} s ago in {} (querying fresh anyway)",
-                entry.age.as_secs(),
-                dir.display()
-            ),
-            None => println!("  cache: no fresh entry in {}", dir.display()),
-        },
+        (Some((dir, key)), _) => {
+            match term::cache::load(dir, key, SystemTime::now(), query::WinSize::current()) {
+                Some(entry) => println!(
+                    "  cache: entry from {} s ago in {} (querying fresh anyway)",
+                    entry.age.as_secs(),
+                    dir.display()
+                ),
+                None => println!(
+                    "  cache: no fresh entry for this window size in {}",
+                    dir.display()
+                ),
+            }
+        }
         (None, None) => println!("  cache: off (XDG_RUNTIME_DIR is not set)"),
         (None, Some(_)) => println!("  cache: off (no controlling terminal)"),
     }

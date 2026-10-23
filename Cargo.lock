@@ -1882,6 +1882,7 @@ dependencies = [
  "brotli-decompressor",
  "bzip2",
  "calamine",
+ "cfb",
  "clap",
  "clap_complete",
  "clap_mangen",
