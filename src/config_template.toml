@@ -153,6 +153,7 @@ channel = "stable"
 #   "document" (docx, pptx, xlsx, odt, ... as markdown),
 #   "cert" (certificate and key summaries; private keys hidden),
 #   "subtitles" (srt, vtt, ass, ssa overview and cues),
+#   "diagram" (mermaid, graphviz or PlantUML source drawn as an image),
 #   "database" (SQLite tables and rows), "notebook" (Jupyter notebooks), "raw" (exactly cat)
 
 # [[rule]]

@@ -41,6 +41,7 @@ Run `make check` before handing work back.
 | `src/notebook.rs` | Jupyter notebook view (nbformat 4): cells and outputs through hooks for markdown, highlighting, images and text cleaning (wired in `render::render_notebook`); capped base64 and output lines |
 | `src/subtitles.rs` | subtitle view (srt, vtt, ass, ssa): decoding (UTF-8, UTF-16 BOM, Windows-1252), parsers, overview warnings, cue list |
 | `src/sqlite.rs` | SQLite view: read-only immutable open, fixed metadata queries, quoted identifiers, query time budget; rows drawn with `table::render_rows` |
+| `src/diagram/` | diagram view: mermaid, graphviz and PlantUML to SVG (drawn by `image`); engine order and detection in `mod.rs`, `helper.rs` runs the built-in renderers in a child (`--internal-diagram`), `run.rs` feeds stdin with rlimits, timeout and output cap |
 | `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |
 | `src/header.rs` | file name rule printed before each file when several are rendered |
 | `src/hexdump.rs` | hex dump view for binary files |
@@ -69,6 +70,7 @@ Run `make check` before handing work back.
 | `tests/office.rs` | office documents: fixtures zipped in the test, rendered output, row cap, piped bytes, corrupt files |
 | `tests/notebook.rs` | notebook view with a notebook made by the test: cells, outputs, escaped tracebacks, blocks image, cat contract, fallback |
 | `tests/subtitles.rs` | subtitle view with files written by the test: overview, warnings, tag stripping, encodings, fallback |
+| `tests/diagrams.rs` | diagram view: mermaid and dot drawn as blocks with a caption, markdown blocks, fallbacks to source, piped bytes |
 | `tests/sqlite.rs` | SQLite view with databases made by the test: output, no side files, corrupt file, hostile names |
 | `install.sh` | curl-pipe installer (POSIX sh) |
 | `docs/` | one page per feature; `docs/research.md` holds the background research |

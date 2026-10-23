@@ -8,6 +8,7 @@ mod config;
 mod decompress;
 mod detect;
 mod diagnose;
+mod diagram;
 mod fastcopy;
 mod generate;
 mod header;
@@ -48,6 +49,9 @@ fn main() {
     }
 
     if let Some(code) = pdf::internal_main() {
+        std::process::exit(code);
+    }
+    if let Some(code) = diagram::helper::internal_main() {
         std::process::exit(code);
     }
 

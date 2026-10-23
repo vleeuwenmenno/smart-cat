@@ -35,6 +35,7 @@ scat fullchain.pem          # certificate summaries and expiry; private keys sta
 scat analysis.ipynb         # Jupyter notebook: cells, outputs and inline plots
 scat movie.en.srt          # subtitles: overview with warnings, then the cues (also vtt, ass)
 scat app.db                 # SQLite: tables, schemas, sample rows (opened read-only)
+scat flow.mmd               # mermaid, graphviz (.dot) and PlantUML diagrams drawn as images
 scat app.log.gz             # decompressed, log levels coloured (diffs too: scat x.patch)
 scat file.txt | grep foo    # piped: identical to cat
 scat --diagnose             # what scat detected about your terminal

@@ -21,6 +21,7 @@
 | [subtitles.md](subtitles.md) | `.srt` `.vtt` `.ass` `.ssa`: overview with warnings, cue list, tag stripping, encodings |
 | [compressed-files.md](compressed-files.md) | transparent `.gz` `.xz` `.zst` `.bz2`: inner type detection, tarballs, size cap |
 | [diffs-and-logs.md](diffs-and-logs.md) | coloured unified diffs and log files: levels, timestamps, streaming |
+| [diagrams.md](diagrams.md) | mermaid, graphviz and PlantUML sources drawn as images, fenced diagram blocks in markdown, fallbacks |
 | [images.md](images.md) | images in the terminal: kitty, sixel, block and ASCII output, sizing, animation, SVG |
 | [configuration.md](configuration.md) | config file location, `[defaults]`, `[[rule]]`, environment variables |
 | [directory-listing.md](directory-listing.md) | `scat` alone and `scat DIR`: grid and long listings, colours, opting out |

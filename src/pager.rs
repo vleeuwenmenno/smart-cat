@@ -145,6 +145,8 @@ pub fn renderer_is_pageable(
                 }
             }
         }
+        // Diagrams are drawn as images (the `auto` case is checked by the caller).
+        Renderer::Diagram => false,
         _ => false,
     }
 }
@@ -569,6 +571,13 @@ mod tests {
     fn only_text_like_files_are_pageable() {
         let text = Kind::Text;
         let bin = Kind::Binary;
+        assert!(!renderer_is_pageable(
+            Renderer::Diagram,
+            &text,
+            "text/plain",
+            false,
+            false
+        ));
         assert!(renderer_is_pageable(
             Renderer::Auto,
             &text,

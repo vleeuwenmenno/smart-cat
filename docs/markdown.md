@@ -23,6 +23,7 @@ curl -s https://example.com/README.md | scat -l md
 | tables | box-drawing borders, column alignment from the `:--` / `:-:` / `--:` row |
 | links | underlined text followed by the dimmed target in parentheses (left out when the text is the URL) |
 | images | local images drawn in place (see [Images](#images)); otherwise a dimmed `[image: alt text]` placeholder |
+| diagrams | ` ```mermaid `, ` ```dot ` and ` ```graphviz ` blocks drawn as images with a caption (see [diagrams.md](diagrams.md#diagrams-in-markdown)); otherwise highlighted code |
 | horizontal rules | a full-width line |
 | HTML | dimmed, as written; HTML comments are hidden; `<br>` breaks the line |
 | footnotes | `[1]` at the reference; the notes are collected after a short rule at the end |
