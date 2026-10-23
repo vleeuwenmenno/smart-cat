@@ -95,7 +95,7 @@ channel = "stable"
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
 #   "video" (info view), "table" (CSV/TSV table), "diff" (coloured diff),
 #   "log" (coloured log levels), "hex" (hex dump), "pdf" (info and pages),
-#   "raw" (exactly cat)
+#   "cert" (certificate and key summaries; private keys hidden), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

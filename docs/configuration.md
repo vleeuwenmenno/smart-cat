@@ -112,7 +112,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"cert"` (certificate and key summaries, private keys hidden, see [certificates-and-keys.md](certificates-and-keys.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |

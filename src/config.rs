@@ -46,6 +46,9 @@ pub enum Renderer {
     Log,
     /// PDF info header and pages as images or text.
     Pdf,
+    /// Certificate and key summaries; private key material is hidden.
+    #[serde(rename = "cert")]
+    Certificate,
 }
 
 impl fmt::Display for Renderer {
@@ -64,6 +67,7 @@ impl fmt::Display for Renderer {
             Renderer::Diff => "diff",
             Renderer::Log => "log",
             Renderer::Pdf => "pdf",
+            Renderer::Certificate => "cert",
         })
     }
 }

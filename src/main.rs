@@ -1,5 +1,6 @@
 mod audio;
 mod cat;
+mod cert;
 mod cli;
 mod config;
 mod decompress;

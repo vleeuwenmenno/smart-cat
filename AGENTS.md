@@ -38,6 +38,7 @@ Run `make check` before handing work back.
 | `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |
 | `src/header.rs` | file name rule printed before each file when several are rendered |
 | `src/hexdump.rs` | hex dump view for binary files |
+| `src/cert/` | certificate and key view: PEM scanning, X.509/CSR summaries (x509-parser), key description and OpenSSH fingerprints, `authorized_keys`/`known_hosts`; private key material is never printed |
 | `src/generate.rs` | `--completions` and `--man` (clap_complete, clap_mangen) |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
@@ -51,6 +52,7 @@ Run `make check` before handing work back.
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
 | `tests/images.rs` | forced image output, captions, piped image bytes |
+| `tests/certificates.rs` + `tests/fixtures/test-keys/` | certificate and key view, hidden private keys, piped bytes; the fixtures are test-only keys |
 | `tests/pdf.rs` | PDF view with hand-written PDFs: header, pages, text, piped bytes, malformed files |
 | `install.sh` | curl-pipe installer (POSIX sh) |
 | `docs/` | one page per feature; `docs/research.md` holds the background research |

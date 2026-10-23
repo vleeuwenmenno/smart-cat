@@ -54,7 +54,11 @@ pub fn renderer_is_pageable(
     is_audio: bool,
 ) -> bool {
     match renderer {
-        Renderer::Code | Renderer::Text | Renderer::Markdown | Renderer::Hex => true,
+        Renderer::Code
+        | Renderer::Text
+        | Renderer::Markdown
+        | Renderer::Hex
+        | Renderer::Certificate => true,
         Renderer::Auto => {
             if is_image || is_audio {
                 return false;
