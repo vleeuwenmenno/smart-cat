@@ -21,6 +21,7 @@ scat --update
 ```sh
 scat main.rs                # highlighted, with line numbers
 scat -p main.rs             # plain: no line numbers
+scat                        # alone in a terminal: list the directory
 scat file.txt | grep foo    # piped: identical to cat
 scat --diagnose             # what scat detected about your terminal
 scat --init-config          # write ~/.config/scat/config.toml

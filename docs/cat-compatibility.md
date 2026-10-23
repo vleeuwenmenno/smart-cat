@@ -14,6 +14,15 @@ scat writes byte-for-byte what GNU cat writes when any of these holds:
 
 The test suite (`tests/cat_compat.rs`) compares scat with GNU cat over every flag combination and several tricky files.
 
+## Exceptions when rendering
+
+Two behaviours differ from cat, and only when scat renders (stdout is a terminal or `-f`):
+
+- `scat` with no arguments, when stdin is also a terminal, lists the current directory instead of waiting for input. With stdin redirected (`echo hi | scat`) or stdout piped it reads stdin like cat. Disable with `no_args = "stdin"` under `[defaults]`.
+- A directory argument is listed instead of failing. Disable with `directories = "error"` under `[defaults]`.
+
+See [directory-listing.md](directory-listing.md).
+
 ## Flags
 
 | Flag | Meaning |
@@ -37,7 +46,7 @@ When scat renders (stdout is a terminal), line numbers are on by default and app
 
 - No file, or `-`, reads standard input. `-` can appear several times.
 - An unreadable file prints `scat: NAME: reason` to stderr and scat continues with the next file. The exit status is 1 if any file failed, else 0.
-- A directory is an error (`Is a directory`), as with cat.
+- A directory is an error (`Is a directory`), as with cat, when output is piped or `--raw` is given.
 - Writing a file onto itself (`scat a >> a`) is refused with `input file is output file`.
 - When the reader of a pipe goes away (`scat big.log | head`), scat exits silently through SIGPIPE, like cat.
 - Streamed input (`tail -f log | scat`) is written as it arrives.

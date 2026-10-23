@@ -29,6 +29,20 @@ ansi = "keep-sgr"
 # Files larger than this are shown without syntax highlighting.
 max_highlight_bytes = 16777216
 
+# `scat` with no arguments, run from a terminal, lists the current directory. Set "stdin"
+# to read standard input like cat instead.
+no_args = "list"
+
+# A directory argument is listed when rendering. Set "error" for cat's "Is a directory".
+directories = "list"
+
+[list]
+# "grid" (like ls) or "long" (one entry per line with size and age).
+style = "grid"
+
+# Show names starting with a dot. `scat --all` does this for one run.
+show_hidden = false
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"

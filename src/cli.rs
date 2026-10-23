@@ -71,6 +71,14 @@ pub struct Cli {
     #[arg(short = 'p', long, help_heading = "Rendering")]
     pub plain: bool,
 
+    /// Show hidden (dot) entries when listing a directory
+    #[arg(long, help_heading = "Directories")]
+    pub all: bool,
+
+    /// List directories one entry per line, with size and age
+    #[arg(long, help_heading = "Directories")]
+    pub long: bool,
+
     /// When to use colors
     #[arg(
         long,

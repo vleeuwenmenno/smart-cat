@@ -28,6 +28,17 @@ Command line flags, then `SCAT_*` environment variables, then matching `[[rule]]
 | `tab_width` | `4` | tab expansion when rendering; `0` keeps tabs |
 | `ansi` | `"keep-sgr"` | escape sequences in files: `"keep-sgr"` keeps colours, `"escape"` shows them as `^[` |
 | `max_highlight_bytes` | `16777216` | larger files are not highlighted |
+| `no_args` | `"list"` | `scat` with no arguments, run from a terminal: `"list"` lists the current directory, `"stdin"` reads stdin like cat |
+| `directories` | `"list"` | directory arguments when rendering: `"list"` or `"error"` (cat's `Is a directory`) |
+
+## `[list]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `style` | `"grid"` | `"grid"` or `"long"` (`--long` for one run) |
+| `show_hidden` | `false` | show dot entries (`--all` for one run) |
+
+See [directory-listing.md](directory-listing.md).
 
 ## `[update]`
 
