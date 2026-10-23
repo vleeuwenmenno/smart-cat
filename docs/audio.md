@@ -80,7 +80,7 @@ lofty and symphonia need to seek, so audio from standard input or a pipe is read
 | Input | mpv command |
 |---|---|
 | audio file | `mpv --no-video --term-osd-bar -- FILE` |
-| video file | `mpv --vo=kitty --term-osd-bar -- FILE`; `--vo=sixel` when the terminal answers the sixel query, `--vo=tct` (coloured text) when it supports neither |
+| video file | `mpv --vo=kitty --quiet --msg-level=all=error --video-align-x=-1 --video-align-y=-1 -- FILE`; `--vo=sixel` when the terminal answers the sixel query, `--vo=tct` (coloured text) when it supports neither. Why: [video.md](video.md#playback) |
 | standard input (`-` or no FILE) | as for video, with `-` as the file; the type is not checked |
 
 - The type is checked by content: a file that is not `audio/*` or `video/*` gives `scat: NAME: not an audio or video file (TYPE); --play needs media` and the next file is played.

@@ -42,12 +42,31 @@ pub fn video_output(caps: Option<&query::Capabilities>) -> &'static str {
     }
 }
 
+/// mpv options for video in the terminal, after `--vo=...`.
+///
+/// - `--quiet` drops the status line and `--msg-level=all=error` everything below errors.
+///   mpv prints both to the same terminal as the picture, in the middle of the sixel or
+///   kitty escape stream, which then ends early and the rest of the image data is shown
+///   as text above and below the video.
+/// - `--video-align-x/y=-1` put the picture in the top left corner. The terminal VOs draw
+///   the on-screen controls into the picture itself, but take mouse positions relative to
+///   the whole terminal; with a centred picture the pointer is off by the black border
+///   (the controls react while the pointer is far above the seek bar).
+const VIDEO_ARGS: [&str; 4] = [
+    "--quiet",
+    "--msg-level=all=error",
+    "--video-align-x=-1",
+    "--video-align-y=-1",
+];
+
 /// The mpv argument list (without the program name). `kind` is `None` when the type is
 /// unknown (standard input): mpv then gets the video settings and plays whatever it finds.
 pub fn mpv_args(kind: Option<MediaKind>, vo: &str, file: &OsStr) -> Vec<OsString> {
     let mut args: Vec<OsString> = match kind {
         Some(MediaKind::Audio) => vec!["--no-video".into(), "--term-osd-bar".into()],
-        _ => vec![format!("--vo={vo}").into(), "--term-osd-bar".into()],
+        _ => std::iter::once(format!("--vo={vo}").into())
+            .chain(VIDEO_ARGS.iter().map(OsString::from))
+            .collect(),
     };
     args.push("--".into());
     args.push(file.to_os_string());
@@ -171,8 +190,34 @@ mod tests {
     fn builds_mpv_arguments() {
         let args = mpv_args(Some(MediaKind::Audio), "null", OsStr::new("-x.mp3"));
         assert_eq!(args, ["--no-video", "--term-osd-bar", "--", "-x.mp3"]);
-        let args = mpv_args(Some(MediaKind::Video), "kitty", OsStr::new("a b.mkv"));
-        assert_eq!(args, ["--vo=kitty", "--term-osd-bar", "--", "a b.mkv"]);
+    }
+
+    #[test]
+    fn builds_video_arguments_per_output() {
+        for vo in ["kitty", "sixel", "tct"] {
+            let args = mpv_args(Some(MediaKind::Video), vo, OsStr::new("a b.mkv"));
+            let expected = [
+                format!("--vo={vo}").as_str(),
+                "--quiet",
+                "--msg-level=all=error",
+                "--video-align-x=-1",
+                "--video-align-y=-1",
+                "--",
+                "a b.mkv",
+            ]
+            .map(OsString::from);
+            assert_eq!(args, expected);
+            // The status line and the terminal progress bar would break the picture.
+            assert!(!args.iter().any(|a| a == "--term-osd-bar"));
+        }
+    }
+
+    #[test]
+    fn unknown_input_gets_video_arguments() {
+        let args = mpv_args(None, "sixel", OsStr::new("-"));
+        assert_eq!(args[0], "--vo=sixel");
+        assert!(args.iter().any(|a| a == "--quiet"));
+        assert_eq!(args[args.len() - 2..], ["--", "-"]);
     }
 
     #[test]

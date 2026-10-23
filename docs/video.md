@@ -55,4 +55,20 @@ ffprobe needs a path, so `scat -` and `cmd | scat` cannot show the info view. sc
 
 ## Playback
 
-`scat --play clip.mp4` plays the file with mpv; see [audio.md](audio.md#--play).
+`scat --play clip.mp4` plays the file with mpv inside the terminal; see [audio.md](audio.md#--play) for the common rules (type check, errors, Ctrl+C). The video output follows the terminal: `--vo=kitty` for the kitty graphics protocol, `--vo=sixel` for sixel, `--vo=tct` (coloured text) otherwise. The command is:
+
+```
+mpv --vo=VO --quiet --msg-level=all=error --video-align-x=-1 --video-align-y=-1 -- FILE
+```
+
+- `--quiet --msg-level=all=error`: no status line and no messages below errors. mpv writes its status line (`V: 00:00:07 / 00:00:21`) and log messages to the same terminal as the picture, in the middle of the sixel or kitty escape stream. The stream then ends early and the rest of the image data is printed as text (rows like `A?A!5?@A??A?...`) above and below the video. mpv's own manual recommends this for the sixel and tct outputs. Seek with the arrow keys or the on-screen controls; there is no `--term-osd-bar`.
+- `--video-align-x=-1 --video-align-y=-1`: the picture sits in the top left corner instead of the middle. The kitty and sixel outputs draw the on-screen controls into the picture, but mpv maps the mouse from terminal cells to pixels counted from the top left of the whole terminal. With a centred picture the mouse is off by the black border above and left of the video, so the controls react while the pointer is far above the seek bar. With the picture in the corner, both use the same origin and the pointer lands within half a cell.
+- No sizes are passed. mpv reads the cell grid and pixel size from the terminal (`TIOCGWINSZ`) on every frame and every mouse event, so a resize, a font zoom or a move to a monitor with another scale is followed. Sizes from scat's own capability cache would go stale in exactly those cases.
+- mpv's defaults do the rest: the alternate screen (the shell output is back after mpv quits), hidden cursor, mouse reporting on while playing and off on exit.
+
+Known limitations:
+
+- The mouse position is the centre of a terminal cell, so it is accurate to half a cell. mpv only reads button presses and motion in X10 mouse encoding, which stops at column and row 223; in wider terminals the mouse does not work past that column.
+- `--vo=tct` draws no on-screen controls and centres the picture itself; use the keyboard.
+- An error mpv prints in the middle of playback (a damaged stream) can still break one frame of the picture. Errors before playback starts, such as an unreadable file, are shown as usual.
+- With `-` (standard input) the type is unknown, so audio on standard input also gets these options and plays without the status line.
