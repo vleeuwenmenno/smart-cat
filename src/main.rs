@@ -4,6 +4,7 @@ mod config;
 mod detect;
 mod diagnose;
 mod highlight;
+mod image;
 mod input;
 mod kv;
 mod render;

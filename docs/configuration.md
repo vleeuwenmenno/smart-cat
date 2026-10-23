@@ -29,6 +29,14 @@ Command line flags, then `SCAT_*` environment variables, then matching `[[rule]]
 | `ansi` | `"keep-sgr"` | escape sequences in files: `"keep-sgr"` keeps colours, `"escape"` shows them as `^[` |
 | `max_highlight_bytes` | `16777216` | larger files are not highlighted |
 
+## `[image]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `protocol` | `"auto"` | `"auto"`, `"kitty"`, `"sixel"`, `"blocks"`, `"sextants"` or `"ascii"`; see [images.md](images.md) |
+| `max_height` | unset | maximum image height in rows; unset means the terminal height minus 4 (at least 10) |
+| `animate` | `true` | play animated GIF/WebP/PNG once; `false` shows the first frame |
+
 ## `[update]`
 
 | Key | Default | Meaning |
@@ -69,7 +77,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"raw"` (exactly cat) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"raw"` (exactly cat), `"image"` (draw as an image) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |
@@ -84,6 +92,7 @@ Settings a rule can change:
 | `SCAT_CONFIG` | `--config` |
 | `SCAT_THEME` | `--theme` |
 | `SCAT_COLOR` | `--color` |
+| `SCAT_PROTOCOL` | `--protocol` |
 | `SCAT_REPO` | GitHub `owner/repo` used by `--update` and `install.sh` (for forks) |
 | `SCAT_INSTALL_DIR` | install directory for `install.sh` |
 | `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` | standard colour switches |

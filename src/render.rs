@@ -85,6 +85,10 @@ fn process<W: Write>(
 
     match settings.renderer {
         Renderer::Raw => write_cat(&mut input, out, &ctx.cat_options, cat_state),
+        Renderer::Image => render_image(&mut input, out, ctx, source, &head),
+        Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
+            render_image(&mut input, out, ctx, source, &head)
+        }
         Renderer::Auto if detected.kind == Kind::Binary => {
             out.flush()?;
             let size = match input.kind {
@@ -126,6 +130,7 @@ struct Context<'a> {
     stdout_tty: bool,
     assets: Option<Assets>,
     caps: Option<Option<query::Capabilities>>,
+    image_screen: Option<crate::image::Screen>,
     warned_theme: bool,
 }
 
@@ -142,6 +147,7 @@ impl<'a> Context<'a> {
             stdout_tty,
             assets: None,
             caps: None,
+            image_screen: None,
             warned_theme: false,
         }
     }
@@ -158,6 +164,33 @@ impl<'a> Context<'a> {
             self.caps = Some(caps);
         }
         self.caps.as_ref().and_then(Option::as_ref)
+    }
+
+    /// How images are drawn in this run; queries the terminal on first use when the
+    /// choice depends on it.
+    pub(crate) fn image_screen(&mut self) -> crate::image::Screen {
+        if let Some(screen) = &self.image_screen {
+            return screen.clone();
+        }
+        let (protocol, protocol_source) = image_protocol(self.cli, self.config);
+        let caps = if crate::image::needs_query(protocol, self.stdout_tty) {
+            self.capabilities().cloned()
+        } else {
+            None
+        };
+        let screen = crate::image::Screen::detect(&crate::image::Env {
+            protocol,
+            protocol_source,
+            caps: caps.as_ref(),
+            stdout_tty: self.stdout_tty,
+            utf8: self.utf8,
+            colors: self.colors,
+            depth: self.depth,
+            multiplexer: term::multiplexer(),
+            max_height: self.config.image.max_height,
+        });
+        self.image_screen = Some(screen.clone());
+        screen
     }
 
     fn background_is_light(&mut self) -> bool {
@@ -183,6 +216,36 @@ impl<'a> Context<'a> {
             self.config.defaults.theme_dark.clone()
         }
     }
+}
+
+/// The image protocol setting and where it came from.
+pub fn image_protocol(cli: &Cli, config: &Config) -> (crate::config::Protocol, &'static str) {
+    match cli.protocol {
+        Some(protocol) => (protocol, "--protocol or SCAT_PROTOCOL"),
+        None => (config.image.protocol, "config"),
+    }
+}
+
+fn render_image<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    source: &Source,
+    head: &[u8],
+) -> io::Result<()> {
+    let screen = ctx.image_screen();
+    let file_name = source.file_name();
+    let options = crate::image::ViewOptions {
+        name: &source.display_name(),
+        file_size: match input.kind {
+            InputKind::Regular { size } => Some(size),
+            _ => None,
+        },
+        svg: crate::image::is_svg(file_name.as_deref(), head),
+        animate: !ctx.cli.no_animate && ctx.config.image.animate,
+        caption: !ctx.cli.plain,
+    };
+    crate::image::view(input, out, &screen, &options)
 }
 
 fn render_text<W: Write>(

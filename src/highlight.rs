@@ -147,7 +147,7 @@ fn foreground(color: Color, depth: ColorDepth) -> Option<String> {
     }
 }
 
-fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
+pub fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
     // Greys map better onto the 24-step grey ramp than onto the colour cube.
     if r == g && g == b {
         return match r {
@@ -187,7 +187,7 @@ const ANSI16: [(u8, u8, u8); 16] = [
     (255, 255, 255),
 ];
 
-fn rgb_to_16(r: u8, g: u8, b: u8) -> u8 {
+pub fn rgb_to_16(r: u8, g: u8, b: u8) -> u8 {
     let dist = |&(pr, pg, pb): &(u8, u8, u8)| {
         let d = |a: u8, b: u8| (i32::from(a) - i32::from(b)).pow(2);
         d(r, pr) + d(g, pg) + d(b, pb)

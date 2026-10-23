@@ -29,6 +29,17 @@ ansi = "keep-sgr"
 # Files larger than this are shown without syntax highlighting.
 max_highlight_bytes = 16777216
 
+[image]
+# How images are drawn: "auto" (best the terminal supports), "kitty", "sixel",
+# "blocks" (Unicode half blocks), "sextants" (2x3 Unicode blocks) or "ascii".
+protocol = "auto"
+
+# Maximum image height in terminal rows. Unset means the terminal height minus 4.
+# max_height = 30
+
+# Play animated GIF, WebP and PNG once (false shows the first frame only).
+animate = true
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -37,7 +48,8 @@ channel = "stable"
 # override earlier ones. A match can use `ext`, `name` (exact file name) and `mime`
 # (wildcards like "text/*"); each takes a string or a list. All given criteria must match.
 #
-# renderer: "auto" (default), "code" (highlighted), "text" (no highlighting), "raw" (exactly cat)
+# renderer: "auto" (default), "code" (highlighted), "text" (no highlighting), "raw" (exactly cat),
+#           "image" (decode and draw as an image)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

@@ -28,6 +28,8 @@ pub enum Renderer {
     Text,
     /// Exactly what cat prints.
     Raw,
+    /// Decode and draw as an image (kitty, sixel or text blocks).
+    Image,
 }
 
 impl fmt::Display for Renderer {
@@ -37,6 +39,7 @@ impl fmt::Display for Renderer {
             Renderer::Code => "code",
             Renderer::Text => "text",
             Renderer::Raw => "raw",
+            Renderer::Image => "image",
         })
     }
 }
@@ -50,6 +53,38 @@ pub enum AnsiMode {
     KeepSgr,
     /// Show every control character, including SGR sequences, as ^X.
     Escape,
+}
+
+/// How images are drawn. `Auto` picks the best method the terminal supports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    /// Best method the terminal supports
+    #[default]
+    Auto,
+    /// kitty graphics protocol
+    Kitty,
+    /// DEC sixel graphics
+    Sixel,
+    /// Unicode half blocks, 1x2 pixels per cell
+    Blocks,
+    /// Unicode sextants, 2x3 pixels per cell (needs a font with U+1FB00)
+    Sextants,
+    /// ASCII brightness ramp
+    Ascii,
+}
+
+impl fmt::Display for Protocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Protocol::Auto => "auto",
+            Protocol::Kitty => "kitty",
+            Protocol::Sixel => "sixel",
+            Protocol::Blocks => "blocks",
+            Protocol::Sextants => "sextants",
+            Protocol::Ascii => "ascii",
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
@@ -67,6 +102,7 @@ pub struct Config {
     #[serde(rename = "rule", skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<Rule>,
     pub update: UpdateConfig,
+    pub image: ImageConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -94,6 +130,27 @@ impl Default for Defaults {
             tab_width: 4,
             ansi: AnsiMode::KeepSgr,
             max_highlight_bytes: 16 * 1024 * 1024,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ImageConfig {
+    pub protocol: Protocol,
+    /// Maximum image height in terminal rows; unset means the terminal height minus 4.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_height: Option<u16>,
+    /// Play animated GIF, WebP and PNG once on a terminal.
+    pub animate: bool,
+}
+
+impl Default for ImageConfig {
+    fn default() -> Self {
+        Self {
+            protocol: Protocol::Auto,
+            max_height: None,
+            animate: true,
         }
     }
 }

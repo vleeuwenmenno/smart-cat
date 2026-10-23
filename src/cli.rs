@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::config::ColorWhen;
+use crate::config::{ColorWhen, Protocol};
 
 /// A smarter cat: prints files like cat, renders them when the output is a terminal.
 ///
@@ -93,6 +93,20 @@ pub struct Cli {
     /// Force the syntax used for highlighting, by name or extension (see --list-languages)
     #[arg(short = 'l', long, value_name = "LANG", help_heading = "Rendering")]
     pub language: Option<String>,
+
+    /// How to draw images
+    #[arg(
+        long,
+        value_enum,
+        value_name = "METHOD",
+        env = "SCAT_PROTOCOL",
+        help_heading = "Rendering"
+    )]
+    pub protocol: Option<Protocol>,
+
+    /// Show only the first frame of animated images
+    #[arg(long, help_heading = "Rendering")]
+    pub no_animate: bool,
 
     /// Use this config file instead of the default location
     #[arg(

@@ -110,13 +110,61 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
             println!("  background: #{r:02x}{g:02x}{b:02x} ({shade})");
         }
     }
-    let graphics = match &caps {
-        Some(c) if c.kitty_graphics => "kitty graphics protocol",
-        Some(c) if c.sixel => "sixel",
-        _ if term::utf8_locale() && !term::is_basic_terminal() => "unicode blocks",
-        _ => "ascii",
+
+    let (protocol, protocol_source) = crate::render::image_protocol(cli, config);
+    let detect = |tty: bool| {
+        crate::image::Screen::detect(&crate::image::Env {
+            protocol,
+            protocol_source,
+            caps: caps.as_ref().filter(|c| c.answered),
+            stdout_tty: tty,
+            utf8: term::utf8_locale(),
+            colors: term::colors_enabled(when, tty),
+            depth: term::color_depth(),
+            multiplexer: term::multiplexer(),
+            max_height: config.image.max_height,
+        })
     };
-    println!("  image output (not implemented yet): {graphics}");
+    let screen = detect(stdout_tty);
+    println!("\nimages");
+    println!("  protocol setting: {protocol} ({protocol_source})");
+    if stdout_tty {
+        println!("  output: {} ({})", screen.method.name(), screen.reason);
+    } else {
+        let on_tty = detect(true);
+        println!(
+            "  on the terminal: {} ({})",
+            on_tty.method.name(),
+            on_tty.reason
+        );
+        println!(
+            "  with -f into this pipe: {} ({})",
+            screen.method.name(),
+            screen.reason
+        );
+    }
+    println!(
+        "  size limit: {} columns x {} rows (terminal {}x{})",
+        screen.cols, screen.max_rows, screen.cols, screen.rows
+    );
+    println!(
+        "  cell size: {}x{} px ({})",
+        screen.cell.0,
+        screen.cell.1,
+        if screen.cell_known {
+            "reported by the terminal"
+        } else {
+            "assumed"
+        }
+    );
+    println!(
+        "  animation: {}",
+        if cli.no_animate || !config.image.animate {
+            "off (first frame only)"
+        } else {
+            "play once"
+        }
+    );
 
     println!("\ntools");
     for (tool, purpose) in TOOLS {
@@ -179,13 +227,18 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
             "binary"
         }
     );
+    let is_image = crate::image::wants(&detected.mime, file_name.as_deref(), &head);
     let renderer = match (settings.renderer, &detected.kind) {
+        (Renderer::Auto, _) if is_image => "image (auto)".to_string(),
         (Renderer::Auto, Kind::Binary) => "none (binary notice)".to_string(),
         (Renderer::Auto, Kind::Text) => "code (auto)".to_string(),
         (other, _) => other.to_string(),
     };
     println!("    renderer: {renderer}");
-    if detected.kind == Kind::Text && settings.renderer != Renderer::Raw {
+    if detected.kind == Kind::Text
+        && !matches!(settings.renderer, Renderer::Raw | Renderer::Image)
+        && !(settings.renderer == Renderer::Auto && is_image)
+    {
         let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
         let language = cli.language.as_deref().or(settings.language.as_deref());
         let syntax = assets.find_syntax(language, file_name.as_deref(), &format!("{first_line}\n"));
