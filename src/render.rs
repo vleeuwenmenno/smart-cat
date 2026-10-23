@@ -12,6 +12,7 @@ use crate::highlight::{self, Assets};
 use crate::input::{self, Input, InputKind, Source};
 use crate::term::{self, ColorDepth, query};
 use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
+use crate::video;
 
 /// Lines longer than this are shown unhighlighted from that point on.
 const MAX_RENDER_LINE: usize = 1024 * 1024;
@@ -83,7 +84,10 @@ fn process<W: Write>(
         .config
         .settings_for(file_name.as_deref(), &detected.mime);
 
+    let is_video = settings.renderer == Renderer::Auto && detected.mime.starts_with("video/");
     match settings.renderer {
+        Renderer::Video => render_video(source, &input, out, ctx, &detected.mime),
+        Renderer::Auto if is_video => render_video(source, &input, out, ctx, &detected.mime),
         Renderer::Raw => write_cat(&mut input, out, &ctx.cat_options, cat_state),
         Renderer::Auto if detected.kind == Kind::Binary => {
             out.flush()?;
@@ -100,6 +104,27 @@ fn process<W: Write>(
         }
         _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
     }
+}
+
+/// Video info view. ffprobe opens the file by path, so standard input and pipes only
+/// get a notice on stderr (exit status 0, like the binary notice).
+fn render_video<W: Write>(
+    source: &Source,
+    input: &Input,
+    out: &mut W,
+    ctx: &Context,
+    mime: &str,
+) -> io::Result<()> {
+    let (Source::Path(path), InputKind::Regular { size }) = (source, input.kind) else {
+        out.flush()?;
+        eprintln!(
+            "scat: {}: video info needs a file (use --raw for bytes)",
+            source.display_name()
+        );
+        return Ok(());
+    };
+    let name = source.file_name().unwrap_or_else(|| source.display_name());
+    video::render(out, path, &name, Some(size), mime, ctx.colors)
 }
 
 fn write_cat<W: Write>(

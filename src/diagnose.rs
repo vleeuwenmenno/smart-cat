@@ -180,6 +180,7 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
         }
     );
     let renderer = match (settings.renderer, &detected.kind) {
+        (Renderer::Auto, _) if detected.mime.starts_with("video/") => "video (auto)".to_string(),
         (Renderer::Auto, Kind::Binary) => "none (binary notice)".to_string(),
         (Renderer::Auto, Kind::Text) => "code (auto)".to_string(),
         (other, _) => other.to_string(),

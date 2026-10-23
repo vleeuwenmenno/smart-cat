@@ -37,7 +37,7 @@ channel = "stable"
 # override earlier ones. A match can use `ext`, `name` (exact file name) and `mime`
 # (wildcards like "text/*"); each takes a string or a list. All given criteria must match.
 #
-# renderer: "auto" (default), "code" (highlighted), "text" (no highlighting), "raw" (exactly cat)
+# renderer: "auto" (default), "code" (highlighted), "text" (no highlighting), "raw" (exactly cat), "video" (info view)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

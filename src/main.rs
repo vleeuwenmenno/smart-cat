@@ -10,6 +10,7 @@ mod render;
 mod term;
 mod update;
 mod util;
+mod video;
 
 use clap::Parser;
 
