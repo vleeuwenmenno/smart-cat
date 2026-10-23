@@ -6,6 +6,7 @@ mod diagnose;
 mod highlight;
 mod input;
 mod kv;
+mod listing;
 mod render;
 mod term;
 mod update;

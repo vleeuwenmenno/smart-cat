@@ -7,6 +7,7 @@
 | [syntax-highlighting.md](syntax-highlighting.md) | language detection, themes, colour depth |
 | [video.md](video.md) | video info view: streams, duration, ffprobe dependency |
 | [configuration.md](configuration.md) | config file location, `[defaults]`, `[[rule]]`, environment variables |
+| [directory-listing.md](directory-listing.md) | `scat` alone and `scat DIR`: grid and long listings, colours, opting out |
 | [terminal-detection.md](terminal-detection.md) | how scat learns what the terminal supports, `--diagnose` |
 | [install-and-update.md](install-and-update.md) | install script, `scat --update`, pre-releases, uninstalling |
 | [releasing.md](releasing.md) | cutting releases and pre-releases (maintainers) |

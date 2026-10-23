@@ -44,6 +44,36 @@ impl fmt::Display for Renderer {
     }
 }
 
+/// What `scat` does with no file arguments when a person is at the terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NoArgs {
+    /// List the current directory.
+    #[default]
+    List,
+    /// Read standard input, like cat.
+    Stdin,
+}
+
+/// What to do with a directory argument when rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Directories {
+    /// List the directory.
+    #[default]
+    List,
+    /// Fail with "Is a directory", like cat.
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ListStyle {
+    #[default]
+    Grid,
+    Long,
+}
+
 /// What to do with escape sequences already present in a text file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -70,6 +100,14 @@ pub struct Config {
     #[serde(rename = "rule", skip_serializing_if = "Vec::is_empty")]
     pub rules: Vec<Rule>,
     pub update: UpdateConfig,
+    pub list: ListConfig,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ListConfig {
+    pub style: ListStyle,
+    pub show_hidden: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -84,6 +122,8 @@ pub struct Defaults {
     pub tab_width: usize,
     pub ansi: AnsiMode,
     pub max_highlight_bytes: u64,
+    pub no_args: NoArgs,
+    pub directories: Directories,
 }
 
 impl Default for Defaults {
@@ -97,6 +137,8 @@ impl Default for Defaults {
             tab_width: 4,
             ansi: AnsiMode::KeepSgr,
             max_highlight_bytes: 16 * 1024 * 1024,
+            no_args: NoArgs::List,
+            directories: Directories::List,
         }
     }
 }

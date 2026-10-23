@@ -6,10 +6,11 @@ use syntect::easy::HighlightLines;
 
 use crate::cat::{self, CatOptions, CatState};
 use crate::cli::Cli;
-use crate::config::{AnsiMode, Config, FileSettings, Renderer};
+use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, Renderer};
 use crate::detect::{self, Kind, SNIFF_BYTES};
 use crate::highlight::{self, Assets};
 use crate::input::{self, Input, InputKind, Source};
+use crate::listing;
 use crate::term::{self, ColorDepth, query};
 use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
 use crate::video;
@@ -29,7 +30,21 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
     let mut cat_state = CatState::default();
     let mut status = 0;
 
-    for source in Source::from_args(&cli.files) {
+    let mut sources = Source::from_args(&cli.files);
+    if cli.files.is_empty()
+        && listing::no_args_action(io::stdin().is_terminal(), render, config.defaults.no_args)
+            == listing::NoArgsAction::ListCurrentDir
+    {
+        sources = vec![Source::Path(".".into())];
+    }
+    if render && config.defaults.directories == Directories::List {
+        ctx.dir_args = sources
+            .iter()
+            .filter(|s| matches!(s, Source::Path(p) if p.is_dir()))
+            .count();
+    }
+
+    for source in sources {
         let result = process(
             &source,
             render,
@@ -63,6 +78,13 @@ fn process<W: Write>(
     out: &mut TrackedWriter<W>,
     cat_state: &mut CatState,
 ) -> io::Result<()> {
+    if let Source::Path(path) = source
+        && render
+        && ctx.config.defaults.directories == Directories::List
+        && path.is_dir()
+    {
+        return list_directory(path, ctx, out);
+    }
     let mut input = input::open(source)?;
     if let InputKind::Regular { size } = input.kind
         && size > 0
@@ -127,6 +149,35 @@ fn render_video<W: Write>(
     video::render(out, path, &name, Some(size), mime, ctx.colors)
 }
 
+fn list_directory<W: Write>(
+    path: &std::path::Path,
+    ctx: &mut Context,
+    out: &mut TrackedWriter<W>,
+) -> io::Result<()> {
+    let style = if ctx.cli.long {
+        ListStyle::Long
+    } else {
+        ctx.config.list.style
+    };
+    let opts = listing::Options {
+        all: ctx.cli.all || ctx.config.list.show_hidden,
+        style,
+        colors: ctx.colors,
+        width: listing::terminal_width(),
+    };
+    // Build first so an unreadable directory prints no header, only the error.
+    let mut buf = Vec::new();
+    listing::list(path, &opts, &mut buf)?;
+    if ctx.dir_args > 1 {
+        if ctx.listed > 0 {
+            out.write_all(b"\n")?;
+        }
+        writeln!(out, "{}:", listing::safe_name(&path.to_string_lossy()))?;
+    }
+    ctx.listed += 1;
+    out.write_all(&buf)
+}
+
 fn write_cat<W: Write>(
     input: &mut Input,
     out: &mut W,
@@ -152,6 +203,9 @@ struct Context<'a> {
     assets: Option<Assets>,
     caps: Option<Option<query::Capabilities>>,
     warned_theme: bool,
+    /// Directory arguments being listed, and how many are done: headers for several.
+    dir_args: usize,
+    listed: usize,
 }
 
 impl<'a> Context<'a> {
@@ -168,6 +222,8 @@ impl<'a> Context<'a> {
             assets: None,
             caps: None,
             warned_theme: false,
+            dir_args: 0,
+            listed: 0,
         }
     }
 
