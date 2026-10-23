@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::config::{ColorWhen, PagingMode, Protocol};
+use crate::config::{ColorWhen, ListStyle, PagingMode, Protocol};
 
 /// A smarter cat: prints files like cat, renders them when the output is a terminal.
 ///
@@ -90,9 +90,21 @@ pub struct Cli {
     #[arg(long, help_heading = "Directories")]
     pub all: bool,
 
-    /// List directories one entry per line, with size and age
+    /// List directories one entry per line, with size and age (same as --style long)
     #[arg(long, help_heading = "Directories")]
     pub long: bool,
+
+    /// How to list directories
+    #[arg(long, value_enum, value_name = "STYLE", help_heading = "Directories")]
+    pub style: Option<ListStyle>,
+
+    /// Show icons instead of thumbnails in the tiles view
+    #[arg(long, help_heading = "Directories")]
+    pub no_thumbnails: bool,
+
+    /// Thumbnail box of a tile in cells, for example 20x10
+    #[arg(long, value_name = "WxH", value_parser = parse_tile_size, help_heading = "Directories")]
+    pub tile_size: Option<(u16, u16)>,
 
     /// When to use colors
     #[arg(
@@ -218,5 +230,35 @@ impl Cli {
             || self.show_tabs_nonprinting
             || self.show_tabs
             || self.show_nonprinting
+    }
+}
+
+/// Parses `WxH` with both sides between 4 and 200 cells.
+fn parse_tile_size(text: &str) -> Result<(u16, u16), String> {
+    let (w, h) = text
+        .split_once(['x', 'X'])
+        .ok_or_else(|| "expected WxH, for example 16x8".to_string())?;
+    let side = |s: &str| -> Result<u16, String> {
+        let n: u16 = s.trim().parse().map_err(|_| format!("not a number: {s}"))?;
+        if (4..=200).contains(&n) {
+            Ok(n)
+        } else {
+            Err(format!("{n} is out of range (4 to 200)"))
+        }
+    };
+    Ok((side(w)?, side(h)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_tile_size;
+
+    #[test]
+    fn tile_size_parses() {
+        assert_eq!(parse_tile_size("16x8"), Ok((16, 8)));
+        assert_eq!(parse_tile_size("20X10"), Ok((20, 10)));
+        assert!(parse_tile_size("16").is_err());
+        assert!(parse_tile_size("2x8").is_err());
+        assert!(parse_tile_size("ax8").is_err());
     }
 }

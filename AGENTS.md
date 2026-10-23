@@ -33,6 +33,7 @@ Run `make check` before handing work back.
 | `src/render.rs` | per-file dispatch, text rendering, control-character sanitizing |
 | `src/highlight.rs` | syntect + two-face (bat's syntaxes and themes), colour reduction |
 | `src/audio.rs` + `src/waveform.rs` | audio info view (lofty tags, symphonia peaks, braille/ASCII waveform) |
+| `src/listing.rs` + `src/listing/` | directory listing: tiles (`tiles.rs`), icons (`icons.rs`), thumbnails and their cache (`thumbs.rs`), grid and long views |
 | `src/play.rs` | `--play`: hands audio and video to mpv |
 | `src/pdf/` | PDF view: info header, `--pages` parser, page drawing and text; `helper.rs` runs hayro in a child (`--internal-pdf`), `sandbox.rs` adds rlimits and the timeout |
 | `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |

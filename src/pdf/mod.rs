@@ -351,16 +351,29 @@ fn draw_pages<W: Write>(
 
 /// A PNG of one page that fits in `box_px`: hayro first, then `pdftoppm`.
 pub fn render_page(path: &Path, page: u32, box_px: (u32, u32)) -> Result<Vec<u8>, String> {
+    render_page_within(path, page, box_px, sandbox::TIMEOUT)
+}
+
+/// [`render_page`] where each helper run gets `timeout` (directory thumbnails).
+pub fn render_page_within(
+    path: &Path,
+    page: u32,
+    box_px: (u32, u32),
+    timeout: std::time::Duration,
+) -> Result<Vec<u8>, String> {
     let page_arg = page.to_string();
     let w = box_px.0.max(16).to_string();
     let h = box_px.1.max(16).to_string();
-    let hayro = sandbox::run(sandbox::helper([
-        std::ffi::OsStr::new("render"),
-        path.as_os_str(),
-        page_arg.as_ref(),
-        w.as_ref(),
-        h.as_ref(),
-    ]));
+    let hayro = sandbox::run_within(
+        sandbox::helper([
+            std::ffi::OsStr::new("render"),
+            path.as_os_str(),
+            page_arg.as_ref(),
+            w.as_ref(),
+            h.as_ref(),
+        ]),
+        timeout,
+    );
     let hayro_error = match hayro {
         Ok(png) if !png.is_empty() => return Ok(png),
         Ok(_) => "no output".to_string(),
@@ -381,7 +394,7 @@ pub fn render_page(path: &Path, page: u32, box_px: (u32, u32)) -> Result<Vec<u8>
     ])
     .args(["-scale-to-x", &w, "-scale-to-y", "-1", "--"])
     .arg(path);
-    match sandbox::run(cmd) {
+    match sandbox::run_within(cmd, timeout) {
         Ok(png) if !png.is_empty() => Ok(png),
         Ok(_) => Err(format!("{hayro_error}; pdftoppm: no output")),
         Err(err) => Err(format!("{hayro_error}; pdftoppm: {err}")),

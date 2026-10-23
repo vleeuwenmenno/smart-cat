@@ -1,4 +1,10 @@
-//! Directory listing: a grid like `ls`, or a long view with one entry per line.
+//! Directory listing: tiles with thumbnails, a grid like `ls`, or a long view with one
+//! entry per line.
+
+mod icons;
+mod md5;
+mod thumbs;
+mod tiles;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -9,7 +15,8 @@ use std::time::SystemTime;
 
 use unicode_width::UnicodeWidthStr;
 
-use crate::config::{ListStyle, NoArgs};
+use crate::config::{Icons, ListStyle, NoArgs};
+use crate::image::{Method, Screen};
 use crate::render::sanitize_str;
 use crate::util::human_size;
 
@@ -63,9 +70,65 @@ impl Entry {
 
 pub struct Options {
     pub all: bool,
+    /// The resolved style (see [`resolve_style`]); `Auto` lists as a grid.
     pub style: ListStyle,
     pub colors: bool,
     pub width: usize,
+    pub tiles: TileOptions,
+}
+
+/// Settings of the tiles view.
+#[derive(Debug, Clone)]
+pub struct TileOptions {
+    /// Thumbnail box in cells (width, height); the name goes on the line below.
+    pub size: (u16, u16),
+    pub thumbnails: bool,
+    pub icons: Icons,
+    pub max_thumbnails: usize,
+    pub cache: bool,
+    pub utf8: bool,
+    /// How thumbnails are drawn; `None` draws icons only.
+    pub screen: Option<Screen>,
+}
+
+impl Default for TileOptions {
+    fn default() -> Self {
+        Self {
+            size: (16, 8),
+            thumbnails: true,
+            icons: Icons::Unicode,
+            max_thumbnails: 200,
+            cache: true,
+            utf8: true,
+            screen: None,
+        }
+    }
+}
+
+/// The style a listing uses. `auto` becomes tiles only on a real terminal (not
+/// `TERM=dumb` or `linux`) where images can be drawn with kitty, sixel or coloured
+/// Unicode blocks; otherwise the grid. Explicit styles are kept.
+pub fn resolve_style(
+    requested: ListStyle,
+    stdout_tty: bool,
+    basic_terminal: bool,
+    method: Option<Method>,
+) -> ListStyle {
+    match requested {
+        ListStyle::Auto
+            if stdout_tty && !basic_terminal && method.is_some_and(|m| m != Method::Ascii) =>
+        {
+            ListStyle::Tiles
+        }
+        ListStyle::Auto => ListStyle::Grid,
+        other => other,
+    }
+}
+
+/// Whether a listing in `style` writes kitty or sixel graphics (and so must not go
+/// through a pager).
+pub fn draws_graphics(style: ListStyle, thumbnails: bool, method: Option<Method>) -> bool {
+    style == ListStyle::Tiles && thumbnails && method.is_some_and(Method::is_pixel)
 }
 
 /// Reads the entries of `path`, sorted: directories first, then the rest, each group
@@ -445,7 +508,8 @@ pub fn list<W: Write>(path: &Path, opts: &Options, out: &mut W) -> io::Result<()
     let entries = read_entries(path, opts.all)?;
     let palette = Palette::from_env();
     match opts.style {
-        ListStyle::Grid => render_grid(&entries, opts, &palette, out),
+        ListStyle::Tiles => tiles::render(path, &entries, opts, &palette, out),
+        ListStyle::Grid | ListStyle::Auto => render_grid(&entries, opts, &palette, out),
         ListStyle::Long => render_long(&entries, opts, &palette, SystemTime::now(), out),
     }
 }
@@ -499,6 +563,7 @@ mod tests {
             style: ListStyle::Grid,
             colors: false,
             width: 7,
+            tiles: TileOptions::default(),
         };
         let mut out = Vec::new();
         render_grid(&entries, &opts, &Palette::parse(""), &mut out).unwrap();
@@ -513,6 +578,7 @@ mod tests {
             style: ListStyle::Grid,
             colors: false,
             width: 6,
+            tiles: TileOptions::default(),
         };
         let mut out = Vec::new();
         render_grid(&entries, &opts, &Palette::parse(""), &mut out).unwrap();
@@ -546,6 +612,34 @@ mod tests {
         assert_eq!(p.style(&file(".env")), "2");
         assert_eq!(p.style(&file("env")), "");
         assert_eq!(p.style(&entry("d", Kind::Dir)), "1;34");
+    }
+
+    #[test]
+    fn auto_style_needs_a_terminal_that_draws_images() {
+        use ListStyle::*;
+        let blocks = Some(Method::HalfBlocks);
+        assert_eq!(resolve_style(Auto, true, false, blocks), Tiles);
+        assert_eq!(resolve_style(Auto, true, false, Some(Method::Kitty)), Tiles);
+        assert_eq!(resolve_style(Auto, true, false, Some(Method::Ascii)), Grid);
+        assert_eq!(resolve_style(Auto, false, false, blocks), Grid);
+        assert_eq!(resolve_style(Auto, true, true, blocks), Grid);
+        assert_eq!(resolve_style(Auto, true, false, None), Grid);
+        assert_eq!(
+            resolve_style(Tiles, false, true, Some(Method::Ascii)),
+            Tiles
+        );
+        assert_eq!(resolve_style(Long, true, false, blocks), Long);
+    }
+
+    #[test]
+    fn only_pixel_tiles_count_as_graphics() {
+        use ListStyle::*;
+        assert!(draws_graphics(Tiles, true, Some(Method::Kitty)));
+        assert!(draws_graphics(Tiles, true, Some(Method::Sixel)));
+        assert!(!draws_graphics(Tiles, false, Some(Method::Kitty)));
+        assert!(!draws_graphics(Tiles, true, Some(Method::HalfBlocks)));
+        assert!(!draws_graphics(Grid, true, Some(Method::Kitty)));
+        assert!(!draws_graphics(Long, true, Some(Method::Sixel)));
     }
 
     #[test]

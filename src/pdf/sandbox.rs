@@ -78,7 +78,12 @@ where
 }
 
 /// Runs `cmd` with the limits described in the module docs and returns its stdout.
-pub fn run(mut cmd: Command) -> Result<Vec<u8>, RunError> {
+pub fn run(cmd: Command) -> Result<Vec<u8>, RunError> {
+    run_within(cmd, TIMEOUT)
+}
+
+/// [`run`] with its own wall clock limit.
+pub fn run_within(mut cmd: Command, timeout: Duration) -> Result<Vec<u8>, RunError> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -109,7 +114,7 @@ pub fn run(mut cmd: Command) -> Result<Vec<u8>, RunError> {
         buf
     });
 
-    let deadline = Instant::now() + TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
