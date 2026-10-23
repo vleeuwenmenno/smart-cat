@@ -2,7 +2,7 @@
 
 # scat
 
-A smarter `cat`. In a terminal, `scat` renders what it prints: syntax-highlighted code, markdown, audio and video info and directory listings today, with images and PDFs on the [roadmap](docs/roadmap.md). When the output goes to a pipe or a file, `scat` behaves exactly like `cat`.
+A smarter `cat`. In a terminal, `scat` renders what it prints: syntax-highlighted code, markdown, images, audio and video info, and directory listings, with PDFs next on the [roadmap](docs/roadmap.md). When the output goes to a pipe or a file, `scat` behaves exactly like `cat`.
 
 ## Install
 
@@ -25,6 +25,7 @@ scat -p main.rs             # plain: no line numbers
 scat README.md              # rendered markdown, wrapped to the terminal
 scat                        # alone in a terminal: list the directory
 scat clip.mp4               # video info (needs ffprobe)
+scat photo.png              # the image itself (kitty, sixel or Unicode blocks)
 scat file.txt | grep foo    # piped: identical to cat
 scat --diagnose             # what scat detected about your terminal
 scat --init-config          # write ~/.config/scat/config.toml

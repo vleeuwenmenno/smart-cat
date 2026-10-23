@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::config::ColorWhen;
+use crate::config::{ColorWhen, Protocol};
 
 /// A smarter cat: prints files like cat, renders them when the output is a terminal.
 ///
@@ -105,6 +105,19 @@ pub struct Cli {
     /// Play audio and video files with mpv instead of showing their info
     #[arg(long, conflicts_with = "raw", help_heading = "Media")]
     pub play: bool,
+    /// How to draw images
+    #[arg(
+        long,
+        value_enum,
+        value_name = "METHOD",
+        env = "SCAT_PROTOCOL",
+        help_heading = "Rendering"
+    )]
+    pub protocol: Option<Protocol>,
+
+    /// Show only the first frame of animated images
+    #[arg(long, help_heading = "Rendering")]
+    pub no_animate: bool,
 
     /// Use this config file instead of the default location
     #[arg(

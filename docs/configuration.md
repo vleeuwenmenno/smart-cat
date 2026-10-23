@@ -40,6 +40,14 @@ Command line flags, then `SCAT_*` environment variables, then matching `[[rule]]
 
 See [directory-listing.md](directory-listing.md).
 
+## `[image]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `protocol` | `"auto"` | `"auto"`, `"kitty"`, `"sixel"`, `"blocks"`, `"sextants"` or `"ascii"`; see [images.md](images.md) |
+| `max_height` | unset | maximum image height in rows; unset means the terminal height minus 4 (at least 10) |
+| `animate` | `true` | play animated GIF/WebP/PNG once; `false` shows the first frame |
+
 ## `[update]`
 
 | Key | Default | Meaning |
@@ -80,7 +88,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"raw"` (exactly cat) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"raw"` (exactly cat) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |
@@ -95,6 +103,7 @@ Settings a rule can change:
 | `SCAT_CONFIG` | `--config` |
 | `SCAT_THEME` | `--theme` |
 | `SCAT_COLOR` | `--color` |
+| `SCAT_PROTOCOL` | `--protocol` |
 | `SCAT_REPO` | GitHub `owner/repo` used by `--update` and `install.sh` (for forks) |
 | `SCAT_INSTALL_DIR` | install directory for `install.sh` |
 | `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` | standard colour switches |

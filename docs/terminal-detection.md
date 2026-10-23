@@ -1,6 +1,6 @@
 # Terminal detection
 
-scat needs to know what the terminal can do: colours, its background, and (soon) which image protocol it speaks. Environment variables give a first guess, but they are wrong over SSH and inside tmux, so scat also asks the terminal.
+scat needs to know what the terminal can do: colours, its background, and which image protocol it speaks. Environment variables give a first guess, but they are wrong over SSH and inside tmux, so scat also asks the terminal.
 
 ## The query
 
@@ -22,7 +22,7 @@ Inside tmux, the kitty query is wrapped in tmux passthrough (needs `set -g allow
 
 - standard output is not a terminal;
 - `TERM` is unset, `dumb`, `linux` or `vt*` (the Linux console and serial lines do not answer);
-- nothing being printed needs it. Today only syntax highlighting without an explicit theme triggers the query; images will too.
+- nothing being printed needs it. Only syntax highlighting without an explicit theme and images with `--protocol auto|kitty|sixel` trigger the query.
 
 ## `scat --diagnose`
 
@@ -32,7 +32,7 @@ Prints everything scat detected:
 - whether stdout is a terminal, colour on/off, colour depth, UTF-8 locale, multiplexer;
 - the relevant environment variables (`TERM`, `TERM_PROGRAM`, `COLORTERM`, `KITTY_WINDOW_ID`, ...);
 - the query results: terminal version, kitty graphics, sixel, cell size, background, how long it took;
-- which image output would be used once images are implemented;
+- which image output is used and why (see [images.md](images.md));
 - helper tools found on `PATH` (`pdftoppm`, `ffmpeg`, `mpv`, ...).
 
 With file arguments it also shows, per file, the detected type, renderer, syntax, line numbers and matching config rules:
