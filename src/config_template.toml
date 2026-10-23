@@ -52,7 +52,7 @@ channel = "stable"
 # (wildcards like "text/*"); each takes a string or a list. All given criteria must match.
 #
 # renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
-#   "audio" (tags and waveform), "video" (info view), "raw" (exactly cat)
+#   "markdown" (rendered), "audio" (tags and waveform), "video" (info view), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

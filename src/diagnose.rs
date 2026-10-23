@@ -185,6 +185,14 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
             "audio (auto)".to_string()
         }
         (Renderer::Auto, Kind::Binary) => "none (binary notice)".to_string(),
+        (Renderer::Auto, Kind::Text)
+            if crate::markdown::is_markdown(
+                file_name.as_deref(),
+                cli.language.as_deref().or(settings.language.as_deref()),
+            ) =>
+        {
+            "markdown (auto)".to_string()
+        }
         (Renderer::Auto, Kind::Text) => "code (auto)".to_string(),
         (other, _) => other.to_string(),
     };
@@ -199,10 +207,14 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
             syntax.map_or("none (plain text)", |s| s.name.as_str())
         );
     }
-    println!(
-        "    line numbers: {}",
-        yes_no(cli.number || cli.number_nonblank || settings.line_numbers)
-    );
+    if renderer.starts_with("markdown") {
+        println!("    line numbers: no (rendered markdown)");
+    } else {
+        println!(
+            "    line numbers: {}",
+            yes_no(cli.number || cli.number_nonblank || settings.line_numbers)
+        );
+    }
     if let Some(theme) = cli.theme.as_ref().or(settings.theme.as_ref()) {
         println!("    theme: {theme}");
     }

@@ -13,6 +13,7 @@ Background and library choices are in [research.md](research.md).
   - syntax highlighting with automatic light/dark theme
   - line number gutter
   - control-character sanitizing
+  - [markdown rendering](markdown.md): wrapping, lists, tables, highlighted code blocks, OSC 8 links
 - **M3, documents and media** (partial)
   - audio info view: tag table, properties and braille waveform ([audio.md](audio.md))
   - video info: container, duration, bitrate and stream details via ffprobe ([video.md](video.md))
@@ -23,7 +24,7 @@ Background and library choices are in [research.md](research.md).
 
 | Milestone | Scope |
 |---|---|
-| M1, text (rest) | markdown rendering; paging through `less -R` for long text; hexdump view for binaries |
+| M1, text (rest) | inline images in markdown (with M2); paging through `less -R` for long text; hexdump view for binaries |
 | M2, images | kitty and sixel output; Unicode block, sextant and ASCII fallbacks; GIF animation; SVG |
 | M3, documents and media (rest) | PDF pages (hayro, with poppler as fallback); audio cover art and video poster frame (need image output from M2) |
 | M4, format pack | JSON/YAML/TOML trees, CSV tables, transparent `.gz/.xz/.zst`, diffs, logs, archives, ELF, SQLite, notebooks, certificates, office documents |

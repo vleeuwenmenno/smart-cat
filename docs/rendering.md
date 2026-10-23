@@ -8,6 +8,7 @@ scat reads the first 8 KiB of each file to decide what it is:
 
 | Detected | Default behaviour |
 |---|---|
+| markdown (`.md`, `.markdown`, `.mdown`, `.mkd`) | [rendered](markdown.md) |
 | text with a known language | [syntax highlighted](syntax-highlighting.md) |
 | other text | printed, with control characters made safe |
 | audio (`audio/*`, plus `.wv .ape .mpc .spx .aac` by name) | [tag table and waveform](audio.md) |
@@ -15,7 +16,7 @@ scat reads the first 8 KiB of each file to decide what it is:
 
 Text means no NUL bytes and at most 5% invalid UTF-8, so Latin-1 files still count as text. The type comes from magic bytes (`infer`), for example `image/png` or `application/x-executable`.
 
-A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `audio` or `raw`.
+A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `markdown`, `audio`, `video` or `raw`.
 
 ## Layout
 

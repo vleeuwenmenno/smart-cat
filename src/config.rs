@@ -32,6 +32,8 @@ pub enum Renderer {
     Video,
     /// Audio tags, properties and a waveform.
     Audio,
+    /// Rendered markdown.
+    Markdown,
 }
 
 impl fmt::Display for Renderer {
@@ -43,6 +45,7 @@ impl fmt::Display for Renderer {
             Renderer::Raw => "raw",
             Renderer::Video => "video",
             Renderer::Audio => "audio",
+            Renderer::Markdown => "markdown",
         })
     }
 }

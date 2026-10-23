@@ -8,6 +8,7 @@ mod highlight;
 mod input;
 mod kv;
 mod listing;
+mod markdown;
 mod play;
 mod render;
 mod term;
