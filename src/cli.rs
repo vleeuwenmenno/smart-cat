@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::config::{ColorWhen, Protocol};
+use crate::config::{ColorWhen, PagingMode, Protocol};
 
 /// A smarter cat: prints files like cat, renders them when the output is a terminal.
 ///
@@ -75,6 +75,16 @@ pub struct Cli {
     /// Render without decorations: no line number gutter
     #[arg(short = 'p', long, help_heading = "Rendering")]
     pub plain: bool,
+
+    /// When to page long output ($SCAT_PAGER, then $PAGER, default `less -RFX`)
+    #[arg(
+        long,
+        value_enum,
+        value_name = "WHEN",
+        env = "SCAT_PAGING",
+        help_heading = "Rendering"
+    )]
+    pub paging: Option<PagingMode>,
 
     /// Show hidden (dot) entries when listing a directory
     #[arg(long, help_heading = "Directories")]
@@ -156,6 +166,14 @@ pub struct Cli {
     /// List languages that can be highlighted
     #[arg(long, help_heading = "Info")]
     pub list_languages: bool,
+
+    /// Print a shell completion script (for example: scat --completions fish)
+    #[arg(long, value_name = "SHELL", value_enum, help_heading = "Info")]
+    pub completions: Option<clap_complete::Shell>,
+
+    /// Print the man page (roff)
+    #[arg(long, help_heading = "Info")]
+    pub man: bool,
 
     /// Update scat to the newest release
     #[arg(long, help_heading = "Updates")]

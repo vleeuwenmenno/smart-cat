@@ -32,7 +32,7 @@ scat --diagnose             # what scat detected about your terminal
 scat --init-config          # write ~/.config/scat/config.toml
 ```
 
-All of `cat`'s flags work (`-n -b -s -A -v -E -T -e -t`).
+All of `cat`'s flags work (`-n -b -s -A -v -E -T -e -t`). Shell completions: `scat --completions fish > ~/.config/fish/completions/scat.fish` (also bash, zsh).
 
 ## Docs
 

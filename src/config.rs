@@ -38,6 +38,8 @@ pub enum Renderer {
     Image,
     /// Box-drawn table for CSV, TSV and PSV files.
     Table,
+    /// Hex dump of the first bytes.
+    Hex,
 }
 
 impl fmt::Display for Renderer {
@@ -52,8 +54,22 @@ impl fmt::Display for Renderer {
             Renderer::Markdown => "markdown",
             Renderer::Image => "image",
             Renderer::Table => "table",
+            Renderer::Hex => "hex",
         })
     }
+}
+
+/// When rendered output goes through a pager.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum PagingMode {
+    /// Page text output once it is longer than the screen
+    #[default]
+    Auto,
+    /// Page all text output
+    Always,
+    /// Never page
+    Never,
 }
 
 /// What `scat` does with no file arguments when a person is at the terminal.
@@ -147,6 +163,7 @@ pub struct Config {
     pub list: ListConfig,
     pub image: ImageConfig,
     pub table: TableConfig,
+    pub hexdump: HexdumpConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -159,6 +176,21 @@ pub struct TableConfig {
 impl Default for TableConfig {
     fn default() -> Self {
         Self { max_rows: 200 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HexdumpConfig {
+    /// How many leading bytes of a binary file the hex dump shows.
+    pub max_bytes: usize,
+}
+
+impl Default for HexdumpConfig {
+    fn default() -> Self {
+        Self {
+            max_bytes: crate::hexdump::DEFAULT_MAX_BYTES,
+        }
     }
 }
 
@@ -183,6 +215,9 @@ pub struct Defaults {
     pub max_highlight_bytes: u64,
     pub no_args: NoArgs,
     pub directories: Directories,
+    pub paging: PagingMode,
+    /// Print a rule with the file name before each file when several are rendered.
+    pub headers: bool,
 }
 
 impl Default for Defaults {
@@ -198,6 +233,8 @@ impl Default for Defaults {
             max_highlight_bytes: 16 * 1024 * 1024,
             no_args: NoArgs::List,
             directories: Directories::List,
+            paging: PagingMode::Auto,
+            headers: true,
         }
     }
 }

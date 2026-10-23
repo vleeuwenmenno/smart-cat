@@ -178,11 +178,12 @@ fn force_render_sanitizes_control_characters() {
 }
 
 #[test]
-fn force_render_skips_binary_files() {
+fn force_render_shows_binary_files_as_hex() {
     let dir = fixtures();
-    let out = run(SCAT, &["-f", "binary.bin"], &dir);
-    assert!(out.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("binary file"));
+    let out = run(SCAT, &["-f", "--color=never", "binary.bin"], &dir);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.starts_with("00000000  "), "{text:?}");
+    assert!(out.stderr.is_empty());
     assert_eq!(out.status.code(), Some(0));
 }
 

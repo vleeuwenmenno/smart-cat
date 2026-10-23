@@ -35,7 +35,7 @@ help:
 	row "make fmt" "Format the code"; \
 	row "make build" "Debug build"; \
 	printf "\n$${H}Release$${R}\n"; \
-	row "make dist" "Static archive in dist/" "(TARGET=$(TARGET))"; \
+	row "make dist" "Static archive in dist/ (binary, completions, man page)" "(TARGET=$(TARGET))"; \
 	row "make bump VERSION=x.y.z" "Commit and tag a release" "(x.y.z-rc.1 = pre-release)"; \
 	printf "\n$${D}Docs: docs/README.md$${R}\n\n"
 
@@ -81,7 +81,13 @@ dist:
 	env $(DIST_CC_VAR)=$(DIST_CC) $(CARGO) build --release --locked --target $(TARGET)
 	mkdir -p dist/stage
 	cp target/$(TARGET)/release/scat README.md dist/stage/
-	tar -czf dist/scat-$(TARGET).tar.gz -C dist/stage scat README.md
+	@# Completions and the man page come from the binary itself, so only a native build can make them.
+	@if [ "$(TARGET_ARCH)" = "$$(uname -m)" ]; then \
+		mkdir -p dist/stage/completions; \
+		for shell in bash fish zsh; do target/$(TARGET)/release/scat --completions $$shell > dist/stage/completions/scat.$$shell || exit 1; done; \
+		target/$(TARGET)/release/scat --man > dist/stage/scat.1 || exit 1; \
+	else echo "note: cross build, no completions or man page in the archive"; fi
+	tar -czf dist/scat-$(TARGET).tar.gz -C dist/stage $$(cd dist/stage && ls)
 	cd dist && sha256sum scat-$(TARGET).tar.gz > scat-$(TARGET).tar.gz.sha256
 	rm -rf dist/stage
 

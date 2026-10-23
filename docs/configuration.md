@@ -30,6 +30,8 @@ Command line flags, then `SCAT_*` environment variables, then matching `[[rule]]
 | `max_highlight_bytes` | `16777216` | larger files are not highlighted |
 | `no_args` | `"list"` | `scat` with no arguments, run from a terminal: `"list"` lists the current directory, `"stdin"` reads stdin like cat |
 | `directories` | `"list"` | directory arguments when rendering: `"list"` or `"error"` (cat's `Is a directory`) |
+| `paging` | `"auto"` | `"auto"` pages long text output, `"always"`, `"never"`; see [paging.md](paging.md) (`--paging` for one run) |
+| `headers` | `true` | a rule with the file name before each file when several are rendered (`-p` hides it for one run) |
 
 ## `[list]`
 
@@ -53,6 +55,12 @@ See [directory-listing.md](directory-listing.md).
 | Key | Default | Meaning |
 |---|---|---|
 | `max_rows` | `200` | data rows shown for CSV/TSV/PSV files before the "more rows" footer; `0` shows all; see [data-files.md](data-files.md) |
+
+## `[hexdump]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_bytes` | `512` | leading bytes of a binary file shown as a [hex dump](rendering.md#hex-dump) (at least 16) |
 
 ## `[update]`
 
@@ -94,7 +102,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"raw"` (exactly cat) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"raw"` (exactly cat) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |
@@ -110,6 +118,8 @@ Settings a rule can change:
 | `SCAT_THEME` | `--theme` |
 | `SCAT_COLOR` | `--color` |
 | `SCAT_PROTOCOL` | `--protocol` |
+| `SCAT_PAGING` | `--paging` |
+| `SCAT_PAGER`, `PAGER` | the pager command, in that order (default `less -RFX`) |
 | `SCAT_REPO` | GitHub `owner/repo` used by `--update` and `install.sh` (for forks) |
 | `SCAT_INSTALL_DIR` | install directory for `install.sh` |
 | `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` | standard colour switches |
