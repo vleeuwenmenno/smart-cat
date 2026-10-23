@@ -46,7 +46,8 @@ The database is untrusted input, and looking at it must change nothing.
 - It is opened read-only with the `immutable=1` URI parameter. SQLite then takes no locks and creates no `-wal`, `-shm` or journal files. Consequence: changes still sitting in a `-wal` file are not shown; the header says when such a file exists.
 - `query_only` is on and `trusted_schema` is off, so views and triggers in the file cannot call risky functions.
 - Only fixed queries run: the schema list from `sqlite_schema`, `pragma_table_info` / `pragma_index_list` / `pragma_index_info` with the name as a bound parameter, `SELECT count(*) FROM "name"` and `SELECT * FROM "name" LIMIT n`. Names are quoted as identifiers (double quotes doubled), so a table called `x"; DROP TABLE y` is just a name. SQL stored in the file is never executed by scat itself.
-- A progress handler interrupts a query after 2 seconds, and all queries for one file stop after 10 seconds. An interrupted row count shows as `? rows`.
+- A progress handler interrupts a query after 2 seconds, and all queries for one file stop after 8 seconds. An interrupted row count shows as `? rows`.
+- The progress handler only runs between SQLite's virtual machine steps, and one step (a `GLOB` over megabytes of text in a view) can take far longer. So the whole inspection runs in a child process (`scat --internal-sqlite`) with a memory limit, and the child is killed after 10 seconds: `scat: NAME: cannot read database: gave up after 10 s`.
 - A locked, truncated or corrupt database gives `scat: NAME: cannot read database: ...` and scat goes on with the next file; the exit status is 1.
 
 ## Configuration

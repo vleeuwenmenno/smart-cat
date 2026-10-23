@@ -224,3 +224,38 @@ fn stdin_is_not_rendered() {
     assert!(out.status.success());
     assert!(!String::from_utf8_lossy(&out.stdout).contains("Tables"));
 }
+
+#[test]
+fn one_slow_builtin_is_killed_by_the_wall_clock() {
+    // SQLite's progress handler runs between virtual machine steps, and one GLOB over
+    // 2 MB of text is a single step that takes far longer than the query budget. The
+    // helper is killed after 10 s instead, and the next file is still shown.
+    let d = dir("slow");
+    let slow = d.join("slow.db");
+    let conn = Connection::open(&slow).unwrap();
+    conn.execute_batch(
+        "CREATE VIEW slow AS SELECT 1 AS x WHERE replace(hex(zeroblob(1000000)),'0','a') \
+         GLOB ('*'||printf('%.*c',49000,'a')||'b')",
+    )
+    .unwrap();
+    drop(conn);
+    let good = d.join("good.db");
+    make_db(&good);
+    let started = std::time::Instant::now();
+    let out = Command::new(SCAT)
+        .args(["--color=never", "-f"])
+        .arg(&slow)
+        .arg(&good)
+        .env("COLUMNS", "100")
+        .env("SCAT_CONFIG", "/nonexistent")
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("slow.db: cannot read database: gave up after 10 s"),
+        "{err}"
+    );
+    assert!(elapsed < std::time::Duration::from_secs(12), "{elapsed:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("users"));
+}

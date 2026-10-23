@@ -1781,6 +1781,7 @@ version = "0.1.0"
 dependencies = [
  "bzip2",
  "calamine",
+ "cfb",
  "clap",
  "clap_complete",
  "clap_mangen",

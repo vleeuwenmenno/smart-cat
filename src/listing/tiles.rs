@@ -166,6 +166,11 @@ pub fn render<W: Write>(
             out,
         )?;
     }
+    if t.thumbnails && t.cache && screen.is_some() {
+        // After the listing is out, so it never waits for this; usually one lstat.
+        out.flush()?;
+        thumbs::prune(&thumbs::Cache::new(true));
+    }
     Ok(())
 }
 

@@ -222,9 +222,65 @@ fn tiles_show_half_block_thumbnails_and_names() {
     let cache = dir.join(".cache/scat/thumbnails");
     let mode = std::fs::metadata(&cache).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o700);
-    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 1);
+    let pngs = |cache: &PathBuf| {
+        std::fs::read_dir(cache)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".png")
+            })
+            .count()
+    };
+    assert_eq!(pngs(&cache), 1);
     // A second run (from the cache) draws the same.
     assert_eq!(stdout(&scat(&args, &dir)), text);
+}
+
+#[test]
+fn tiles_prune_the_thumbnail_cache_once_a_day() {
+    let dir = media_tree("list-tiles-prune");
+    let cache = dir.join(".cache/scat/thumbnails");
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&cache)
+            .unwrap();
+    }
+    let month_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+    let stale = cache.join("0123456789abcdef0123456789abcdef.png");
+    std::fs::write(&stale, b"old").unwrap();
+    let set_old = |path: &std::path::Path| {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(month_ago)
+            .unwrap();
+    };
+    set_old(&stale);
+    // A symlink to a file outside the cache: neither it nor its target is touched.
+    let outside = dir.join("outside.bin");
+    std::fs::write(&outside, b"keep").unwrap();
+    set_old(&outside);
+    std::os::unix::fs::symlink(&outside, cache.join("link.png")).unwrap();
+
+    let args = ["-f", "--style", "tiles", "--protocol", "ascii", "."];
+    assert!(scat(&args, &dir).status.success());
+    assert!(!stale.exists());
+    assert!(cache.join("link.png").symlink_metadata().is_ok());
+    assert_eq!(std::fs::read(&outside).unwrap(), b"keep");
+    assert!(cache.join(".pruned").is_file());
+
+    // Not due again on the next run.
+    std::fs::write(&stale, b"old").unwrap();
+    set_old(&stale);
+    assert!(scat(&args, &dir).status.success());
+    assert!(stale.exists());
 }
 
 #[test]
