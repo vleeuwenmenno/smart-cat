@@ -86,6 +86,41 @@ pub fn fit_cells(
     (cols, rows)
 }
 
+/// Thumbnails (cover art, poster frames) are at most this many rows high.
+const THUMB_MAX_ROWS: u16 = 20;
+/// Below this many rows a thumbnail is left out.
+const THUMB_MIN_ROWS: u16 = 4;
+
+/// The cell box for a thumbnail drawn above or beside an info table on a terminal of
+/// `cols`x`rows`: at most `max_cols` wide and 20 rows or a third of the terminal
+/// high, whichever is smaller. `None` when the terminal is too small to bother.
+pub fn thumbnail_box(cols: u16, rows: u16, max_cols: u16) -> Option<(u16, u16)> {
+    let max_rows = THUMB_MAX_ROWS.min(rows / 3);
+    (max_rows >= THUMB_MIN_ROWS).then_some((max_cols.min(cols).max(1), max_rows))
+}
+
+/// Columns and rows below which text output may still enlarge a small image to show
+/// each of its pixels, so icons stay recognisable.
+const TEXT_FLOOR: (u16, u16) = (32, 16);
+
+/// The largest cell box text output may use for an image of `width`x`height` pixels,
+/// so small images are not blown up to the whole screen. The box is the larger of
+/// twice the image's size in cells (what kitty or sixel would cover, doubled) and one
+/// sub-pixel per image pixel, the latter limited to [`TEXT_FLOOR`].
+pub fn text_cap(width: u32, height: u32, cell: (u16, u16), sub: (u32, u32)) -> (u16, u16) {
+    let cap = |px: u32, cell: u16, sub: u32, floor: u16| -> u16 {
+        let doubled = (u64::from(px) * 2).div_ceil(u64::from(cell.max(1)));
+        let native = u64::from(px)
+            .div_ceil(u64::from(sub.max(1)))
+            .min(u64::from(floor));
+        doubled.max(native).clamp(1, u64::from(u16::MAX)) as u16
+    };
+    (
+        cap(width, cell.0, sub.0, TEXT_FLOOR.0),
+        cap(height, cell.1, sub.1, TEXT_FLOOR.1),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +158,33 @@ mod tests {
         assert_eq!(fit_cells(400, 100, 80, 40, (8, 16)), (80, 10));
         // Tiny images may grow (text output).
         assert_eq!(fit_cells(4, 4, 80, 10, (8, 16)), (20, 10));
+    }
+
+    #[test]
+    fn text_output_caps_small_images() {
+        // A 16x16 icon on half blocks: one sub-pixel per pixel, 16x8 cells.
+        assert_eq!(text_cap(16, 16, (8, 16), (1, 2)), (16, 8));
+        // Sextants need fewer cells for the same pixels.
+        assert_eq!(text_cap(16, 16, (8, 16), (2, 3)), (8, 6));
+        // 200 px: twice its 25x13 cells-equivalent.
+        assert_eq!(text_cap(200, 200, (8, 16), (1, 2)), (50, 25));
+        // A 1x1 pixel stays one cell.
+        assert_eq!(text_cap(1, 1, (8, 16), (1, 2)), (1, 1));
+        // Through fit_cells, a 16x16 icon stays 16x8 on a big terminal.
+        let (c, r) = text_cap(16, 16, (8, 16), (1, 2));
+        assert_eq!(fit_cells(16, 16, 200.min(c), 60.min(r), (8, 16)), (16, 8));
+    }
+
+    #[test]
+    fn thumbnails_are_modest() {
+        // Tall terminal: the fixed maximum.
+        assert_eq!(thumbnail_box(200, 80, 40), Some((40, 20)));
+        // 45 rows: a third.
+        assert_eq!(thumbnail_box(120, 45, 40), Some((40, 15)));
+        // Narrow terminal: its width.
+        assert_eq!(thumbnail_box(30, 60, 40), Some((30, 20)));
+        // Tiny terminal: none.
+        assert_eq!(thumbnail_box(80, 11, 40), None);
     }
 
     #[test]

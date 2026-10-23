@@ -140,18 +140,27 @@ impl Screen {
                 cols: fit.cols,
                 rows: fit.rows,
                 px: (fit.width, px_h),
+                pin_rows: false,
             };
         }
-        let (cols, rows) = size::fit_cells(width, height, max_cols, max_rows, self.cell);
         let (sx, sy) = match self.method {
             Method::HalfBlocks => (1, 2),
             Method::Sextants => (2, 3),
             _ => (1, 1),
         };
+        let (cap_cols, cap_rows) = size::text_cap(width, height, self.cell, (sx, sy));
+        let (cols, rows) = size::fit_cells(
+            width,
+            height,
+            max_cols.min(cap_cols),
+            max_rows.min(cap_rows),
+            self.cell,
+        );
         Layout {
             cols,
             rows,
             px: (u32::from(cols) * sx, u32::from(rows) * sy),
+            pin_rows: false,
         }
     }
 
@@ -167,7 +176,7 @@ impl Screen {
     fn palette(&self) -> text::Palette {
         text::Palette {
             depth: self.depth,
-            background: self.background.map_or([0, 0, 0], |(r, g, b)| [r, g, b]),
+            background: self.background.map(|(r, g, b)| [r, g, b]),
             colors: self.colors,
         }
     }
@@ -234,6 +243,8 @@ struct Layout {
     rows: u16,
     /// Pixel size the image is resized to before encoding.
     px: (u32, u32),
+    /// kitty: give the height in cells too, so the image covers exactly `rows`.
+    pin_rows: bool,
 }
 
 /// Limits and decorations for [`show`].
@@ -244,8 +255,11 @@ pub struct ShowOptions<'a> {
     /// At most this many rows (default and upper bound: `[image] max_height` or the
     /// terminal height minus 4).
     pub max_rows: Option<u16>,
-    /// A dim line printed under the image. Sanitized before printing.
+    /// A dim line printed under the image by [`show`]. Sanitized before printing.
+    #[allow(dead_code)]
     pub caption: Option<&'a str>,
+    /// kitty: pin the height to the computed rows (for [`write_beside`]).
+    pub pin_rows: bool,
 }
 
 /// Draws `img` with the method and size limits of `screen`, then the caption.
@@ -259,19 +273,153 @@ pub struct ShowOptions<'a> {
 /// let screen = ctx.image_screen();
 /// image::show(out, &screen, &cover, &ShowOptions { max_rows: Some(12), caption: Some("cover"), ..Default::default() })?;
 /// ```
-#[allow(dead_code)] // for cover art, poster frames, PDF pages and markdown images
+#[allow(dead_code)] // for PDF pages and other single images with a caption
 pub fn show<W: Write>(
     out: &mut W,
     screen: &Screen,
     img: &DynamicImage,
     opts: &ShowOptions,
 ) -> io::Result<()> {
-    let (max_cols, max_rows) = screen.limits(opts);
-    let layout = screen.layout(img.width(), img.height(), max_cols, max_rows);
-    let frame = encode(screen, &layout, img, None, FrameMode::Still)?;
-    out.write_all(&frame)?;
-    finish_still(out, screen)?;
+    let drawn = draw(screen, img, opts)?;
+    drawn.write(out)?;
     write_caption(out, screen, opts.caption)
+}
+
+/// An image encoded for the screen but not written yet, with the cells it covers.
+#[derive(Debug, Clone)]
+pub struct Drawn {
+    /// Text methods: one line per row, each ending in `\n`. kitty and sixel: the
+    /// escape sequences, without a newline after them.
+    pub data: Vec<u8>,
+    pub cols: u16,
+    pub rows: u16,
+    pub method: Method,
+}
+
+impl Drawn {
+    /// True for kitty and sixel, whose output is one escape sequence, not lines.
+    pub fn is_pixel(&self) -> bool {
+        self.method.is_pixel()
+    }
+
+    /// The rows of a text image, without their newlines. Empty for kitty and sixel.
+    pub fn lines(&self) -> Vec<&[u8]> {
+        if self.is_pixel() {
+            return Vec::new();
+        }
+        self.data
+            .split(|&b| b == b'\n')
+            .take(usize::from(self.rows))
+            .collect()
+    }
+
+    /// Writes the image and moves the cursor to the start of the line below it.
+    pub fn write<W: Write>(&self, out: &mut W) -> io::Result<()> {
+        out.write_all(&self.data)?;
+        if self.is_pixel() {
+            // kitty leaves the cursor after the image's last column on its last row;
+            // sixel terminals leave it on the image's last text row.
+            out.write_all(b"\n")?;
+        }
+        Ok(())
+    }
+}
+
+/// Encodes `img` for `screen` within the limits of `opts` (the caption is ignored).
+pub fn draw(screen: &Screen, img: &DynamicImage, opts: &ShowOptions) -> io::Result<Drawn> {
+    let (max_cols, max_rows) = screen.limits(opts);
+    let mut layout = screen.layout(img.width(), img.height(), max_cols, max_rows);
+    layout.pin_rows = opts.pin_rows;
+    let data = encode(screen, &layout, img, None, FrameMode::Still)?;
+    Ok(Drawn {
+        data,
+        cols: layout.cols,
+        rows: layout.rows,
+        method: screen.method,
+    })
+}
+
+/// Decodes an encoded image (any supported raster format, or SVG when `svg`) and
+/// encodes it like [`draw`]. Animations give their first frame. Errors are short
+/// messages for the caller to show or ignore.
+pub fn draw_encoded(
+    screen: &Screen,
+    data: Vec<u8>,
+    svg: bool,
+    opts: &ShowOptions,
+) -> Result<Drawn, String> {
+    if data.len() as u64 > MAX_FILE_BYTES {
+        return Err("image too large".into());
+    }
+    let decoded = decode::Decoded::open(data, svg)?;
+    let img = match decoded {
+        decode::Decoded::Svg { .. } => {
+            let (width, height) = decoded.size();
+            let (max_cols, max_rows) = screen.limits(opts);
+            let layout = screen.layout(
+                width.saturating_mul(SVG_GROWTH),
+                height.saturating_mul(SVG_GROWTH),
+                max_cols,
+                max_rows,
+            );
+            DynamicImage::ImageRgba8(decoded.render_svg(layout.px.0, layout.px.1)?)
+        }
+        _ => decoded.first_frame()?,
+    };
+    draw(screen, &img, opts).map_err(|e| e.to_string())
+}
+
+/// SVGs may be drawn up to this many times their intrinsic size.
+const SVG_GROWTH: u32 = 4;
+
+/// Gap in columns between an image and the text beside it.
+pub const BESIDE_GAP: u16 = 2;
+
+/// Whether text can be laid out to the right of an image on this screen. Text
+/// methods always can; kitty and sixel need a terminal (cursor movement) and a
+/// reported cell size, since otherwise the rows the image covers are a guess.
+pub fn can_write_beside(screen: &Screen) -> bool {
+    !screen.method.is_pixel() || (screen.tty && screen.cell_known)
+}
+
+/// Writes `drawn` with `text` lines to its right, `BESIDE_GAP` columns apart, and
+/// leaves the cursor at the start of the line below both. The caller checks
+/// [`can_write_beside`] and keeps the lines short enough not to wrap; a pixel image
+/// must have been drawn with `pin_rows` and fit on the screen.
+///
+/// kitty and sixel: the image's rows are first reserved with newlines (so drawing it
+/// cannot scroll), the cursor goes back up, and the image is drawn between a cursor
+/// save and restore; then every text line starts with a cursor move to the right.
+pub fn write_beside<W: Write>(out: &mut W, drawn: &Drawn, text: &[Vec<u8>]) -> io::Result<()> {
+    let indent = drawn.cols + BESIDE_GAP;
+    let rows = usize::from(drawn.rows);
+    if !drawn.is_pixel() {
+        let lines = drawn.lines();
+        for i in 0..rows.max(text.len()) {
+            if let Some(line) = lines.get(i) {
+                out.write_all(line)?;
+            }
+            if let Some(t) = text.get(i) {
+                let pad = if i < lines.len() { BESIDE_GAP } else { indent };
+                write!(out, "{:pad$}", "", pad = usize::from(pad))?;
+                out.write_all(t)?;
+            }
+            out.write_all(b"\n")?;
+        }
+        return Ok(());
+    }
+    // One spare line: some sixel terminals put the cursor below the image, which
+    // must not scroll the screen between the cursor save and restore.
+    out.write_all(&b"\n".repeat(rows + 1))?;
+    write!(out, "\x1b[{}A\x1b7", rows + 1)?;
+    out.write_all(&drawn.data)?;
+    out.write_all(b"\x1b8")?;
+    for t in text {
+        write!(out, "\x1b[{indent}C")?;
+        out.write_all(t)?;
+        out.write_all(b"\n")?;
+    }
+    out.write_all(&b"\n".repeat(rows.saturating_sub(text.len())))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -298,6 +446,7 @@ fn encode(
         Method::Kitty => {
             let placement = kitty::Placement {
                 cols: layout.cols,
+                rows: if layout.pin_rows { layout.rows } else { 0 },
                 ids: match mode {
                     FrameMode::Animated { image_id } => Some((image_id, 1)),
                     FrameMode::Still => None,
@@ -326,7 +475,7 @@ fn encode(
             let mut rgba = resize(img, w, h);
             if mode != FrameMode::Still {
                 // Unpainted pixels would show the previous frame.
-                flatten(&mut rgba, screen.palette().background);
+                flatten(&mut rgba, screen.palette().background.unwrap_or([0, 0, 0]));
             }
             sixel::write_sixel(&mut buf, &rgba)?;
         }
@@ -432,8 +581,8 @@ pub fn view<W: Write>(
     if let decode::Decoded::Svg { .. } = decoded {
         // Vectors stay sharp when enlarged; allow up to 4x the intrinsic size.
         let layout = screen.layout(
-            width.saturating_mul(4),
-            height.saturating_mul(4),
+            width.saturating_mul(SVG_GROWTH),
+            height.saturating_mul(SVG_GROWTH),
             max_cols,
             max_rows,
         );
@@ -517,4 +666,83 @@ pub fn wants(mime: &str, file_name: Option<&str>, head: &[u8]) -> bool {
 /// Whether the content should be parsed as SVG.
 pub fn is_svg(file_name: Option<&str>, head: &[u8]) -> bool {
     file_name.is_some_and(|n| n.to_ascii_lowercase().ends_with(".svg")) || looks_like_svg(head)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn screen(method: Method, tty: bool, cell_known: bool) -> Screen {
+        Screen {
+            method,
+            reason: String::new(),
+            cols: 100,
+            rows: 50,
+            max_rows: 46,
+            cell: (10, 20),
+            cell_known,
+            depth: ColorDepth::TrueColor,
+            colors: true,
+            background: None,
+            tty,
+        }
+    }
+
+    #[test]
+    fn beside_needs_a_known_grid_for_pixel_images() {
+        assert!(can_write_beside(&screen(Method::HalfBlocks, false, false)));
+        assert!(can_write_beside(&screen(Method::Kitty, true, true)));
+        assert!(!can_write_beside(&screen(Method::Kitty, true, false)));
+        assert!(!can_write_beside(&screen(Method::Sixel, false, true)));
+    }
+
+    #[test]
+    fn text_beside_text_image() {
+        let drawn = Drawn {
+            data: b"AA\nBB\n".to_vec(),
+            cols: 2,
+            rows: 2,
+            method: Method::HalfBlocks,
+        };
+        let text = [b"t1".to_vec(), b"t2".to_vec(), b"t3".to_vec()];
+        let mut out = Vec::new();
+        write_beside(&mut out, &drawn, &text).unwrap();
+        assert_eq!(out, b"AA  t1\nBB  t2\n    t3\n");
+        // Fewer text lines than image rows: no trailing padding.
+        let mut out = Vec::new();
+        write_beside(&mut out, &drawn, &text[..1]).unwrap();
+        assert_eq!(out, b"AA  t1\nBB\n");
+    }
+
+    #[test]
+    fn text_beside_pixel_image_reserves_rows_first() {
+        let drawn = Drawn {
+            data: b"<img>".to_vec(),
+            cols: 4,
+            rows: 3,
+            method: Method::Sixel,
+        };
+        let mut out = Vec::new();
+        write_beside(&mut out, &drawn, &[b"a".to_vec(), b"b".to_vec()]).unwrap();
+        assert_eq!(
+            out,
+            b"\n\n\n\n\x1b[4A\x1b7<img>\x1b8\x1b[6Ca\n\x1b[6Cb\n\n".to_vec()
+        );
+    }
+
+    #[test]
+    fn kitty_rows_are_pinned_on_request() {
+        let s = screen(Method::Kitty, true, true);
+        let img = DynamicImage::ImageRgba8(RgbaImage::new(100, 100));
+        let opts = ShowOptions {
+            pin_rows: true,
+            ..Default::default()
+        };
+        let drawn = draw(&s, &img, &opts).unwrap();
+        assert_eq!((drawn.cols, drawn.rows), (10, 5));
+        let text = String::from_utf8_lossy(&drawn.data);
+        assert!(text.contains(",c=10,r=5,"), "{text}");
+        let drawn = draw(&s, &img, &ShowOptions::default()).unwrap();
+        assert!(!String::from_utf8_lossy(&drawn.data).contains(",r="));
+    }
 }

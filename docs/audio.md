@@ -37,11 +37,21 @@ The title line is the file name. The table shows whatever the file has, and skip
 | codec | as reported by the decoder, e.g. `Advanced Audio Coding`, `Apple Lossless Audio Codec` (only when the waveform decoder can read the file) |
 | bitrate, sample rate, channels, bit depth | stream properties |
 | size | file size |
-| cover art | `yes (jpeg, 500x500)` when a picture is embedded; the picture itself will be drawn once image output lands |
+| cover art | `yes (jpeg, 500x500)` when a picture is embedded; the picture itself is drawn too, see below |
 
 Tag values come from the file and are untrusted: control characters and escape sequences are shown as `^X`, never sent to the terminal. Lyrics are not shown.
 
 If the tags cannot be read (a damaged file), the table falls back to the detected type, the size and a `tags: unreadable (...)` row.
+
+## Cover art
+
+When the file has an embedded picture (the front cover, else the first picture), scat draws it with the [image output](images.md) method of the run, at most 40 columns wide and 20 rows high, and never more than a third of the terminal height. On a terminal under 12 rows there is no art.
+
+- **Beside the table** when there is room for the table (40 columns) to the right of the art. Table values that would not fit are cut with `…`, so no line wraps into the picture.
+- **Above the table** otherwise.
+- kitty and sixel put the table beside the art only on a terminal that reported its cell size, because only then the rows the picture covers are known. scat first prints empty lines for those rows (so drawing the picture cannot scroll), moves back up, draws the picture between a cursor save and restore, and starts each table line with a cursor move to the right. Without a cell size, the art goes above the table.
+- ASCII output (no UTF-8 locale, or colours off) draws no art: a cover in letters adds noise, not information. `-f` into a pipe without `--color=always` is ASCII, so it gets the plain table.
+- A picture that cannot be decoded is skipped; the `cover art` row still says it is there.
 
 ## Formats
 

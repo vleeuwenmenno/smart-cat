@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, FileType, TaggedFile, TaggedFileExt};
-use lofty::picture::PictureInformation;
+use lofty::picture::{PictureInformation, PictureType};
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag};
 use symphonia::core::codecs::audio::AudioDecoderOptions;
@@ -17,6 +17,7 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 
+use crate::image::{self, Screen, ShowOptions};
 use crate::input::{Input, InputKind, Source};
 use crate::kv;
 use crate::util::human_size;
@@ -57,6 +58,9 @@ impl Media {
     }
 }
 
+/// Prints the audio view: cover art (when the file has one) beside or above the tag
+/// table, then the waveform. `screen` is called only when there is cover art, since
+/// it may query the terminal.
 pub fn render<W: Write>(
     out: &mut W,
     source: &Source,
@@ -64,6 +68,7 @@ pub fn render<W: Write>(
     mime: &str,
     colors: bool,
     utf8: bool,
+    screen: &mut dyn FnMut() -> Screen,
 ) -> io::Result<()> {
     let (media, size) = match (source, input.kind) {
         (Source::Path(path), InputKind::Regular { size }) => (Media::File(path.clone()), size),
@@ -111,7 +116,23 @@ pub fn render<W: Write>(
             |n| n.to_string_lossy().into_owned(),
         ),
     };
-    kv::write_table(out, &title, &rows, colors)?;
+    let art = tagged
+        .as_ref()
+        .ok()
+        .and_then(cover_picture)
+        .and_then(|data| draw_art(&screen(), data));
+    match art {
+        Some((drawn, screen)) if beside(&screen, &drawn) => {
+            let width = usize::from(screen.cols - drawn.cols - image::BESIDE_GAP);
+            let lines = kv::table_lines(&title, &rows, colors, Some(width));
+            image::write_beside(out, &drawn, &lines)?;
+        }
+        Some((drawn, _)) => {
+            drawn.write(out)?;
+            kv::write_table(out, &title, &rows, colors)?;
+        }
+        None => kv::write_table(out, &title, &rows, colors)?,
+    }
 
     if let Some(decoded) = decoded
         && !decoded.peaks.is_empty()
@@ -146,6 +167,45 @@ pub fn render<W: Write>(
         }
     }
     Ok(())
+}
+
+/// Cover art is at most this many columns wide.
+const ART_MAX_COLS: u16 = 40;
+/// The tag table needs this many columns to stand beside the art.
+const TABLE_MIN_COLS: u16 = 40;
+
+/// Decodes and encodes cover art for `screen`. ASCII output gets no art: a cover
+/// drawn in letters adds noise, not information.
+fn draw_art(screen: &Screen, data: Vec<u8>) -> Option<(image::Drawn, Screen)> {
+    if screen.method == image::Method::Ascii {
+        return None;
+    }
+    let (max_cols, max_rows) = image::size::thumbnail_box(screen.cols, screen.rows, ART_MAX_COLS)?;
+    let opts = ShowOptions {
+        max_cols: Some(max_cols),
+        max_rows: Some(max_rows),
+        pin_rows: image::can_write_beside(screen),
+        ..Default::default()
+    };
+    let drawn = image::draw_encoded(screen, data, false, &opts).ok()?;
+    Some((drawn, screen.clone()))
+}
+
+/// Whether the tag table goes to the right of the art: the method allows it and the
+/// table keeps at least [`TABLE_MIN_COLS`] columns.
+fn beside(screen: &Screen, drawn: &image::Drawn) -> bool {
+    image::can_write_beside(screen)
+        && screen.cols >= drawn.cols + image::BESIDE_GAP + TABLE_MIN_COLS
+        && (!drawn.is_pixel() || drawn.rows < screen.rows)
+}
+
+/// The front cover's bytes, else the first picture's.
+fn cover_picture(file: &TaggedFile) -> Option<Vec<u8>> {
+    let pictures = || file.tags().iter().flat_map(|t| t.pictures());
+    pictures()
+        .find(|p| p.pic_type() == PictureType::CoverFront)
+        .or_else(|| pictures().next())
+        .map(|p| p.data().to_vec())
 }
 
 fn read_tags(media: &Media) -> Result<TaggedFile, String> {

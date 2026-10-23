@@ -34,7 +34,7 @@ Notes per method:
 
 - **kitty**: the image is sent as PNG inside the escape sequences (`t=d`, `f=100`), base64 in 4096-byte chunks, with replies suppressed (`q=2`). This works over SSH. An unscaled PNG file is sent as is; anything else is scaled and re-encoded as a fast PNG.
 - **sixel**: scat quantises the image to at most 256 colours with median cut, dithers it with Floyd–Steinberg, and leaves transparent pixels unpainted. The height is rounded down to a multiple of 6 pixels so the image ends on a whole sixel band.
-- **Blocks, sextants and ASCII**: colours follow the detected colour depth (24-bit, 256 or 16). Fully transparent pixels show the terminal background. Partly transparent pixels are blended onto the background colour the terminal reported, or onto black. On a light background, the ASCII ramp is inverted.
+- **Blocks, sextants and ASCII**: colours follow the detected colour depth (24-bit, 256 or 16). Pixels under 50% alpha show the terminal background. Other partly transparent pixels are blended onto the background colour the terminal reported; when it reported none (or was not asked, as with `--protocol=blocks`), they keep their own colour, since blending onto a guessed black looks wrong on light terminals. On a light background, the ASCII ramp is inverted.
 - **tmux**: sixel is used only if tmux itself reports sixel support (DA1 is answered by tmux). Pass-through of the kitty protocol is not supported, so inside tmux a kitty terminal gets text blocks.
 - `--color=never` and `NO_COLOR` turn blocks and sextants into ASCII. They do not affect kitty or sixel.
 
@@ -45,7 +45,8 @@ Notes per method:
 - Width: at most the terminal width. scat reads the width from stdout's window size, then `$COLUMNS`, then falls back to 80.
 - Height: at most `[image] max_height` rows. The default is the terminal height minus 4, and at least 10.
 - The aspect ratio is kept, using the cell size in pixels that the terminal reported. Without a report, scat assumes 8x16 pixel cells (a 1:2 cell).
-- kitty and sixel never enlarge an image beyond its pixel size, so small icons stay small. Text methods may enlarge an image up to the height limit.
+- kitty and sixel never enlarge an image beyond its pixel size, so small icons stay small.
+- Text methods enlarge small images only up to the larger of: twice the cells the image would cover with kitty or sixel, and one sub-pixel per image pixel (at most 32 columns by 16 rows). A 16x16 icon becomes 16x8 cells of half blocks instead of filling the screen.
 - SVGs are rendered by resvg at the final pixel size, and are allowed to grow up to 4 times their intrinsic size. Text in SVGs uses the system fonts, which are loaded only when the SVG contains `<text`. `<image>` elements that point to other files are not loaded. Embedded `data:` images still work.
 
 A 4000x3000 JPEG takes about 65 ms in a release build with text blocks, 95 ms with kitty, and 110 ms with sixel, all including decoding.
@@ -75,6 +76,17 @@ Animated GIF, WebP and PNG play **once** on a terminal, then the last frame stay
 | | | `[image] max_height` | maximum height in rows |
 | `-p` | | | no caption |
 
+## In other views
+
+The same output methods draw [audio cover art](audio.md#cover-art), [video poster frames](video.md#poster-frame) and [local images in markdown](markdown.md#images).
+
 ## For other renderers
 
-`src/image/mod.rs` exposes `image::show(out, &screen, &DynamicImage, &ShowOptions { max_cols, max_rows, caption })`. Cover art, video poster frames, PDF pages and markdown images use it. `Context::image_screen()` in `render.rs` supplies the `Screen`: the chosen method, the size limits and the colours. It is detected once per run.
+`src/image/mod.rs` exposes:
+
+- `image::show(out, &screen, &DynamicImage, &ShowOptions { max_cols, max_rows, caption, .. })` draws an image and a caption.
+- `image::draw` and `image::draw_encoded` (from file bytes, SVG included) return a `Drawn`: the encoded bytes plus the cells covered, to place yourself.
+- `image::write_beside(out, &drawn, &lines)` lays text out to the right of an image; check `image::can_write_beside(&screen)` first and draw with `pin_rows: true`.
+- `image::size::thumbnail_box` gives the size limits used for cover art and poster frames.
+
+`Context::image_screen()` in `render.rs` supplies the `Screen`: the chosen method, the size limits and the colours. It is detected once per run.

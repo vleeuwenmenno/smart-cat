@@ -13,6 +13,9 @@ pub const CHUNK: usize = 4096;
 pub struct Placement {
     /// Width in cells; kitty computes the height from the aspect ratio.
     pub cols: u16,
+    /// Height in cells; 0 lets kitty compute it. Set when text is laid out beside
+    /// the image, so the image covers exactly the rows reserved for it.
+    pub rows: u16,
     /// Image and placement ids, to replace the previous frame of an animation.
     pub ids: Option<(u32, u32)>,
     /// Leave the cursor where it is (`C=1`), for redrawing in place.
@@ -36,6 +39,9 @@ pub fn write_png<W: Write>(out: &mut W, png: &[u8], placement: Placement) -> io:
             write!(out, "a=T,f=100,t=d,q=2")?;
             if placement.cols > 0 {
                 write!(out, ",c={}", placement.cols)?;
+            }
+            if placement.rows > 0 {
+                write!(out, ",r={}", placement.rows)?;
             }
             if let Some((image, place)) = placement.ids {
                 write!(out, ",i={image},p={place}")?;
@@ -130,13 +136,14 @@ mod tests {
         let mut out = Vec::new();
         let placement = Placement {
             cols: 5,
+            rows: 3,
             ids: Some((9, 1)),
             keep_cursor: true,
         };
         write_png(&mut out, &data, placement).unwrap();
         let seqs = sequences(&out);
         assert_eq!(seqs.len(), 4);
-        assert!(seqs[0].starts_with(b"a=T,f=100,t=d,q=2,c=5,i=9,p=1,C=1,m=1;"));
+        assert!(seqs[0].starts_with(b"a=T,f=100,t=d,q=2,c=5,r=3,i=9,p=1,C=1,m=1;"));
         assert!(seqs[1].starts_with(b"q=2,m=1;"));
         assert!(seqs[3].starts_with(b"q=2,m=0;"));
         let mut payload = Vec::new();
