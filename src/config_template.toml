@@ -147,7 +147,8 @@ channel = "stable"
 #   "archive" (summary and file tree),
 #   "document" (docx, pptx, xlsx, odt, ... as markdown),
 #   "cert" (certificate and key summaries; private keys hidden),
-#   "database" (SQLite tables and rows), "raw" (exactly cat)
+#   "database" (SQLite tables and rows),
+#   "diagram" (mermaid, graphviz or PlantUML source drawn as an image), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

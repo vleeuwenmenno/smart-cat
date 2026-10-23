@@ -57,6 +57,8 @@ pub enum Renderer {
     Certificate,
     /// SQLite database: header facts, tables, schemas and sample rows.
     Database,
+    /// Mermaid, graphviz or PlantUML source drawn as an image.
+    Diagram,
 }
 
 impl fmt::Display for Renderer {
@@ -80,6 +82,7 @@ impl fmt::Display for Renderer {
             Renderer::Document => "document",
             Renderer::Certificate => "cert",
             Renderer::Database => "database",
+            Renderer::Diagram => "diagram",
         })
     }
 }

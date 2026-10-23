@@ -13,6 +13,7 @@ use crate::cli::Cli;
 use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, PagingMode, Renderer};
 use crate::decompress;
 use crate::detect::{self, Kind, SNIFF_BYTES};
+use crate::diagram;
 use crate::fastcopy;
 use crate::header;
 use crate::hexdump;
@@ -196,6 +197,13 @@ fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     if as_markdown && markdown_has_images(path) {
         return false;
     }
+    // Diagrams are drawn as images.
+    if settings.renderer == Renderer::Auto
+        && detected.kind == Kind::Text
+        && diagram::detect(file_name.as_deref(), language).is_some()
+    {
+        return false;
+    }
     pager::renderer_is_pageable(
         settings.renderer,
         &detected.kind,
@@ -205,11 +213,12 @@ fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     )
 }
 
-/// Whether a markdown file references an image (`![`), read up to 4 MiB.
+/// Whether a markdown file references an image (`![`) or has a fenced diagram block,
+/// read up to 4 MiB.
 fn markdown_has_images(path: &std::path::Path) -> bool {
     let mut text = Vec::new();
     let read = std::fs::File::open(path).and_then(|f| f.take(4 << 20).read_to_end(&mut text));
-    read.is_err() || text.windows(2).any(|w| w == b"![")
+    read.is_err() || text.windows(2).any(|w| w == b"![") || diagram::markdown_has_diagrams(&text)
 }
 
 /// The rule before a file when several are rendered, with a blank line between files.
@@ -357,6 +366,27 @@ fn process<W: Write>(
         Renderer::Certificate => render_cert(&mut input, out, ctx, &settings, file_name.as_deref()),
         Renderer::Auto if crate::cert::wants(file_name.as_deref(), &head) => {
             render_cert(&mut input, out, ctx, &settings, file_name.as_deref())
+        }
+        Renderer::Diagram => render_diagram(
+            &mut input,
+            out,
+            ctx,
+            &settings,
+            file_name.as_deref(),
+            source,
+        ),
+        Renderer::Auto
+            if detected.kind == Kind::Text
+                && diagram::detect(file_name.as_deref(), language).is_some() =>
+        {
+            render_diagram(
+                &mut input,
+                out,
+                ctx,
+                &settings,
+                file_name.as_deref(),
+                source,
+            )
         }
         Renderer::Table => render_table(
             &mut input,
@@ -703,7 +733,38 @@ fn render_markdown<W: Write>(
         let screen = ctx.borrow_mut().image_screen();
         markdown_image(&screen, &path, max_cols)
     };
-    let rendered = markdown::render_with_images(&text, &opts, &mut highlight, &mut images);
+    let name = source.display_name();
+    let mut diagrams = |lang: &str, code: &str, max_cols: u16| {
+        let kind = diagram::fence_kind(lang)?;
+        let mut ctx = ctx.borrow_mut();
+        if !ctx.colors {
+            return None;
+        }
+        let screen = ctx.image_screen();
+        drop(ctx);
+        if screen.method == crate::image::Method::Ascii {
+            return None;
+        }
+        let limits = (Some(max_cols), Some(MARKDOWN_DIAGRAM_ROWS));
+        match draw_diagram(&screen, kind, code, limits) {
+            Ok((drawn, _)) => Some((drawn, format!("{} diagram", kind.name()))),
+            Err(message) => {
+                crate::report!(
+                    "{name}: cannot draw {} diagram: {}",
+                    kind.name(),
+                    sanitize_str(&message)
+                );
+                None
+            }
+        }
+    };
+    let rendered = markdown::render_with_diagrams(
+        &text,
+        &opts,
+        &mut highlight,
+        &mut images,
+        Some(&mut diagrams),
+    );
     out.write_all(&rendered)
 }
 
@@ -764,6 +825,8 @@ fn render_document<W: Write>(
 
 /// Markdown images are at most this many rows high.
 const MARKDOWN_IMAGE_ROWS: u16 = 15;
+/// Diagrams in markdown documents are at most this many rows high.
+const MARKDOWN_DIAGRAM_ROWS: u16 = 20;
 /// Larger image files in markdown documents are left as placeholders.
 const MARKDOWN_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -968,6 +1031,91 @@ fn render_image<W: Write>(
         caption: !ctx.cli.plain,
     };
     crate::image::view(input, out, &screen, &options)
+}
+
+/// Mermaid, graphviz and PlantUML sources drawn as an image with a caption. Shown as
+/// highlighted source when images cannot be drawn (ASCII output, or `-f` into a pipe
+/// without `--protocol`), and after a short note when drawing fails.
+fn render_diagram<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+    source: &Source,
+) -> io::Result<()> {
+    let mut data = Vec::new();
+    (&mut input.reader)
+        .take(diagram::MAX_SOURCE_BYTES + 1)
+        .read_to_end(&mut data)?;
+    let fits = data.len() as u64 <= diagram::MAX_SOURCE_BYTES;
+    let want_images = fits && (ctx.stdout_tty || ctx.cli.protocol.is_some());
+    if want_images {
+        let text = String::from_utf8_lossy(&data);
+        let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+        let kind = diagram::detect(file_name, language).or_else(|| diagram::sniff(&text));
+        let screen = ctx.image_screen();
+        let name = source.display_name();
+        match kind {
+            _ if screen.method == crate::image::Method::Ascii => {}
+            Some(kind) => match draw_diagram(&screen, kind, &text, (None, None)) {
+                Ok((drawn, engine)) => {
+                    drawn.write(out)?;
+                    if !ctx.cli.plain {
+                        let caption = format!(
+                            "{}  {} diagram ({})",
+                            sanitize_str(&name),
+                            kind.name(),
+                            engine.name()
+                        );
+                        if ctx.colors {
+                            writeln!(out, "\x1b[2m{caption}\x1b[22m")?;
+                        } else {
+                            writeln!(out, "{caption}")?;
+                        }
+                    }
+                    return Ok(());
+                }
+                Err(message) => {
+                    out.flush()?;
+                    crate::report!(
+                        "{name}: cannot draw {} diagram: {}; showing the source",
+                        kind.name(),
+                        sanitize_str(&message)
+                    );
+                }
+            },
+            None => {
+                out.flush()?;
+                crate::report!(
+                    "{name}: not a mermaid, graphviz or PlantUML diagram; showing the source"
+                );
+            }
+        }
+    }
+    let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+    input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+    let head = sniff(input)?;
+    render_text(input, out, ctx, settings, file_name, &head)
+}
+
+/// Renders a diagram to SVG and encodes it for `screen` within `(max_cols, max_rows)`.
+/// Errors are short messages.
+fn draw_diagram(
+    screen: &crate::image::Screen,
+    kind: diagram::Kind,
+    text: &str,
+    (max_cols, max_rows): (Option<u16>, Option<u16>),
+) -> Result<(crate::image::Drawn, diagram::Engine), String> {
+    let svg = diagram::render(kind, text).map_err(|failure| failure.to_string())?;
+    let opts = crate::image::ShowOptions {
+        max_cols,
+        max_rows,
+        ..Default::default()
+    };
+    let drawn = crate::image::draw_encoded(screen, svg.data, true, &opts)
+        .map_err(|err| format!("{}: cannot draw the SVG: {err}", svg.engine.name()))?;
+    Ok((drawn, svg.engine))
 }
 
 /// PDF view. Pages are drawn as images on a terminal; their text is shown with

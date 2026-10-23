@@ -241,7 +241,7 @@ Rules are matched against the detected mime first and the extension as a hint, a
 - **Docs**: epub, man/roff, org (`orgize`), rst, asciidoc, rtf, latex/typst (typst renderer as in mcat).
 - **Images**: avif, heic (ffmpeg), jxl (`jxl-oxide`), psd, exr/hdr (tonemap), camera RAW (embedded JPEG), QR decode (`rqrr`).
 - **Media**: srt/vtt/ass subtitles, midi (`midly`, piano roll), tracker modules, m3u/pls playlists.
-- **Diagrams**: graphviz `.dot` (`dot` → `resvg`), mermaid (`mermaid-rs-renderer`, used by mcat), plantuml (external).
+- **Diagrams** (done, see [diagrams.md](diagrams.md)): graphviz `.dot` (`dot` → `resvg`, `layout-rs` without graphviz), mermaid (`mermaid-rs-renderer`, used by mcat; `mmdc` fallback), plantuml (external).
 - **Fonts**: ttf/otf/woff2 name table + sample text rendered as an image (`ttf-parser`, `fontdue`).
 - **Geo/3D**: geojson/gpx/kml braille map, stl/obj/gltf wireframe.
 - **Misc**: ics, vcf, eml/mbox (`mail-parser`), torrent, `.desktop`, har, git objects (`gix`), `.env` with masking.

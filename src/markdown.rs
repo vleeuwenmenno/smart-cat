@@ -78,6 +78,10 @@ pub type Highlighter<'a> = &'a mut dyn FnMut(&str, &str) -> Option<Vec<Vec<u8>>>
 /// keep the `[image: alt]` placeholder.
 pub type ImageLoader<'a> = &'a mut dyn FnMut(&str, u16) -> Option<Drawn>;
 
+/// Draws a fenced diagram block (` ```mermaid `, ` ```dot `): `(language, source, max
+/// columns)` to the image and a caption, or `None` to show the block as code.
+pub type DiagramLoader<'a> = &'a mut dyn FnMut(&str, &str, u16) -> Option<(Drawn, String)>;
+
 /// At most this many images are drawn per document; later ones keep the placeholder.
 const MAX_IMAGES: usize = 50;
 
@@ -150,6 +154,17 @@ pub fn render_with_images(
     highlight: Highlighter,
     images: ImageLoader,
 ) -> Vec<u8> {
+    render_with_diagrams(text, opts, highlight, images, None)
+}
+
+/// [`render_with_images`] that also draws fenced diagram blocks through `diagrams`.
+pub fn render_with_diagrams<'h>(
+    text: &str,
+    opts: &Options,
+    highlight: Highlighter<'h>,
+    images: ImageLoader<'h>,
+    diagrams: Option<DiagramLoader<'h>>,
+) -> Vec<u8> {
     let mut parse = ParseOptions::empty();
     parse.insert(ParseOptions::ENABLE_TABLES);
     parse.insert(ParseOptions::ENABLE_STRIKETHROUGH);
@@ -159,6 +174,7 @@ pub fn render_with_images(
     parse.insert(ParseOptions::ENABLE_YAML_STYLE_METADATA_BLOCKS);
 
     let mut renderer = Renderer::new(opts, highlight, images);
+    renderer.diagrams = diagrams;
     for event in Parser::new_ext(text, parse) {
         renderer.event(event);
     }
@@ -350,6 +366,7 @@ struct Renderer<'o, 'h> {
     glyphs: &'static Glyphs,
     highlight: Highlighter<'h>,
     images: ImageLoader<'h>,
+    diagrams: Option<DiagramLoader<'h>>,
     images_drawn: usize,
     sink: Sink,
     footnotes: Sink,
@@ -383,6 +400,7 @@ impl<'o, 'h> Renderer<'o, 'h> {
             },
             highlight,
             images,
+            diagrams: None,
             images_drawn: 0,
             sink: Sink::default(),
             footnotes: Sink::default(),
@@ -810,6 +828,12 @@ impl<'o, 'h> Renderer<'o, 'h> {
         self.images_drawn += 1;
         self.flush_paragraph();
         self.begin_block();
+        self.write_drawn(&drawn);
+        true
+    }
+
+    /// Writes an image block, each row after the container prefixes.
+    fn write_drawn(&mut self, drawn: &Drawn) {
         if drawn.is_pixel() {
             let pieces = self.prefix();
             write_pieces(&mut self.sink.buf, &pieces, self.opts, &self.links);
@@ -824,6 +848,31 @@ impl<'o, 'h> Renderer<'o, 'h> {
             }
         }
         self.sink.started = true;
+    }
+
+    /// Draws a fenced diagram block as an image with a dim caption. False when it is
+    /// not a diagram or cannot be drawn; the block is then shown as code.
+    fn draw_diagram(&mut self, lang: &str, code: &str) -> bool {
+        if crate::diagram::fence_kind(lang).is_none()
+            || self.table.is_some()
+            || self.heading.is_some()
+            || self.images_drawn >= MAX_IMAGES
+        {
+            return false;
+        }
+        let max_cols = u16::try_from(self.avail()).unwrap_or(u16::MAX);
+        let Some(diagrams) = self.diagrams.as_mut() else {
+            return false;
+        };
+        let Some((drawn, caption)) = diagrams(lang, code, max_cols) else {
+            return false;
+        };
+        self.images_drawn += 1;
+        self.begin_block();
+        self.write_drawn(&drawn);
+        let caption = sanitize_line(&caption, self.opts.tab_width);
+        self.line(&[Piece::new(caption, dim())]);
+        self.sink.pending_blank = true;
         true
     }
 
@@ -962,6 +1011,9 @@ impl<'o, 'h> Renderer<'o, 'h> {
     }
 
     fn code_block(&mut self, lang: &str, code: &str) {
+        if self.draw_diagram(lang, code) {
+            return;
+        }
         self.begin_block();
         let highlighted = if self.opts.colors && !lang.is_empty() {
             (self.highlight)(lang, code)
@@ -1367,6 +1419,44 @@ mod tests {
                 ("a.png".to_string(), 40),
                 ("b.png".to_string(), 38),
                 ("skip.png".to_string(), 40)
+            ]
+        );
+    }
+
+    #[test]
+    fn diagram_blocks_become_images_with_a_caption() {
+        let drawn = Drawn {
+            data: b"AB\nCD\n".to_vec(),
+            cols: 2,
+            rows: 2,
+            method: crate::image::Method::HalfBlocks,
+        };
+        let mut none = |_: &str, _: &str| None;
+        let mut images = |_: &str, _: u16| None;
+        let mut seen = Vec::new();
+        let mut diagrams = |lang: &str, code: &str, cols: u16| {
+            seen.push((lang.to_string(), code.to_string(), cols));
+            (!code.contains("broken")).then(|| (drawn.clone(), format!("{lang} diagram")))
+        };
+        let text = "Intro\n\n> ```mermaid\n> graph TD\n> ```\n\n```dot\nbroken\n```\n\n\
+                    ```rust\nfn x() {}\n```\n";
+        let out = render_with_diagrams(
+            text,
+            &opts(40, false, true),
+            &mut none,
+            &mut images,
+            Some(&mut diagrams),
+        );
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "Intro\n\n│ AB\n│ CD\n│ mermaid diagram\n\n    broken\n\n    fn x() {}\n"
+        );
+        // Only diagram languages are asked; a failure keeps the code block.
+        assert_eq!(
+            seen,
+            [
+                ("mermaid".to_string(), "graph TD\n".to_string(), 38),
+                ("dot".to_string(), "broken\n".to_string(), 40)
             ]
         );
     }

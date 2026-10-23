@@ -17,6 +17,9 @@ const TOOLS: &[(&str, &str)] = &[
     ("ffmpeg", "video frames"),
     ("ffprobe", "media metadata"),
     ("mpv", "playback"),
+    ("dot", "graphviz diagrams"),
+    ("plantuml", "PlantUML diagrams"),
+    ("mmdc", "mermaid diagrams the built-in renderer cannot draw"),
     ("less", "paging"),
 ];
 
@@ -282,12 +285,16 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
     let is_office = crate::office::wants(&detected.mime, file_name.as_deref(), &head).is_some();
     let is_cert = crate::cert::wants(file_name.as_deref(), &head);
     let is_database = crate::sqlite::wants(&head);
+    let language = cli.language.as_deref().or(settings.language.as_deref());
+    let diagram = crate::diagram::detect(file_name.as_deref(), language)
+        .filter(|_| detected.kind == Kind::Text);
     let renderer = match (settings.renderer, &detected.kind) {
         (Renderer::Auto, _) if is_database => "database (auto)".to_string(),
         (Renderer::Auto, _) if is_pdf => "pdf (auto)".to_string(),
         (Renderer::Auto, _) if is_office => "document (auto)".to_string(),
         (Renderer::Auto, _) if is_image => "image (auto)".to_string(),
         (Renderer::Auto, _) if is_cert => "cert (auto)".to_string(),
+        (Renderer::Auto, _) if diagram.is_some() => "diagram (auto)".to_string(),
         (Renderer::Auto, _) if detected.mime.starts_with("video/") => "video (auto)".to_string(),
         (Renderer::Auto, _) if crate::render::is_audio(&detected, file_name.as_deref()) => {
             "audio (auto)".to_string()
@@ -355,6 +362,25 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
             tool("pdftoppm"),
             tool("pdftotext")
         );
+    }
+    if renderer.starts_with("diagram") {
+        let kind = diagram.or_else(|| crate::diagram::sniff(&String::from_utf8_lossy(&head)));
+        match kind {
+            Some(kind) => {
+                let engines: Vec<&str> =
+                    crate::diagram::engines(kind, |name| which(name).is_some())
+                        .iter()
+                        .map(|e| e.program().unwrap_or("built in"))
+                        .collect();
+                let engines = if engines.is_empty() {
+                    format!("none ({})", kind.install_hint())
+                } else {
+                    engines.join(", then ")
+                };
+                println!("    diagram: {}, drawn by {engines}", kind.name());
+            }
+            None => println!("    diagram: not recognised (shown as source)"),
+        }
     }
     if detected.kind == Kind::Text
         && !matches!(
