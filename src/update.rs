@@ -38,7 +38,7 @@ pub fn run(check_only: bool, pre: bool, config: &Config) -> i32 {
     match update(check_only, include_pre) {
         Ok(()) => 0,
         Err(message) => {
-            eprintln!("scat: update: {message}");
+            crate::report!("update: {message}");
             1
         }
     }

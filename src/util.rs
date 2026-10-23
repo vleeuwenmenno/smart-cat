@@ -1,4 +1,31 @@
+use std::ffi::OsStr;
 use std::io::{self, BufRead, Write};
+use std::sync::OnceLock;
+
+/// Prints a message on standard error with the program name in front, like coreutils:
+/// `scat: NAME: message`, or `cat: ...` when scat was started under the name `cat`.
+#[macro_export]
+macro_rules! report {
+    ($($arg:tt)*) => {
+        eprintln!("{}: {}", $crate::util::prog_name(), format_args!($($arg)*))
+    };
+}
+
+/// Whether a program name (`argv[0]`) is `cat`, after stripping any directory.
+pub fn is_cat_name(argv0: &OsStr) -> bool {
+    std::path::Path::new(argv0).file_name() == Some(OsStr::new("cat"))
+}
+
+/// True when scat was started under the name `cat` (a `cat -> scat` symlink).
+pub fn invoked_as_cat() -> bool {
+    static INVOKED: OnceLock<bool> = OnceLock::new();
+    *INVOKED.get_or_init(|| std::env::args_os().next().is_some_and(|a| is_cat_name(&a)))
+}
+
+/// The name used in messages: `cat` when invoked as cat, otherwise `scat`.
+pub fn prog_name() -> &'static str {
+    if invoked_as_cat() { "cat" } else { "scat" }
+}
 
 /// Formats an I/O error the way coreutils does: the strerror text without Rust's
 /// " (os error N)" suffix.
@@ -131,6 +158,16 @@ mod tests {
         );
         assert_eq!(buf, b"gh");
         assert_eq!(read_line_capped(&mut reader, &mut buf, 4).unwrap(), None);
+    }
+
+    #[test]
+    fn recognises_cat_names() {
+        assert!(is_cat_name(OsStr::new("cat")));
+        assert!(is_cat_name(OsStr::new("/usr/local/bin/cat")));
+        assert!(is_cat_name(OsStr::new("./cat")));
+        assert!(!is_cat_name(OsStr::new("scat")));
+        assert!(!is_cat_name(OsStr::new("/bin/cat2")));
+        assert!(!is_cat_name(OsStr::new("")));
     }
 
     #[test]

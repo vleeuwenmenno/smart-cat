@@ -72,6 +72,16 @@ See [directory-listing.md](directory-listing.md).
 
 See [pdf.md](pdf.md).
 
+## `[cat_mode]`
+
+Applies when scat is started under the name `cat`, through a `cat -> scat` symlink (see [using-as-cat.md](using-as-cat.md)).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `render` | `false` | `false`: behave exactly like GNU cat, also on a terminal (no rendering, pager, directory listing or terminal query). `true`: render as `scat` does, with all other settings applying as usual |
+
+Messages say `cat:` either way. Explicit scat flags still work under the name `cat` (`cat -f FILE` renders, `cat --diagnose` reports). There are no other keys: with `render = true`, `[defaults]` and the rules control everything, as for `scat`.
+
 ## `[update]`
 
 | Key | Default | Meaning |
@@ -133,3 +143,4 @@ Settings a rule can change:
 | `SCAT_REPO` | GitHub `owner/repo` used by `--update` and `install.sh` (for forks) |
 | `SCAT_INSTALL_DIR` | install directory for `install.sh` |
 | `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` | standard colour switches |
+| `XDG_RUNTIME_DIR` | where terminal query answers are cached for 10 minutes; unset means no cache (see [terminal-detection.md](terminal-detection.md#cache)) |

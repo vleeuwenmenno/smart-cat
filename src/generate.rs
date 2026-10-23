@@ -21,7 +21,7 @@ fn finish(result: io::Result<()>) -> i32 {
     match result {
         Ok(()) => 0,
         Err(err) => {
-            eprintln!("scat: write error: {}", crate::util::io_message(&err));
+            crate::report!("write error: {}", crate::util::io_message(&err));
             1
         }
     }
@@ -79,7 +79,7 @@ fn targets() -> Vec<Target> {
 /// `--refresh-completions` run after `--update`.
 pub fn install(mode: Mode) -> i32 {
     if std::env::var_os("HOME").is_none() {
-        eprintln!("scat: HOME is not set");
+        crate::report!("HOME is not set");
         return 1;
     }
     let mut status = 0;
@@ -113,7 +113,7 @@ pub fn install(mode: Mode) -> i32 {
                 }
             }
             Err(err) => {
-                eprintln!("scat: {shown}: {}", crate::util::io_message(&err));
+                crate::report!("{shown}: {}", crate::util::io_message(&err));
                 status = 1;
             }
         }

@@ -29,15 +29,38 @@ Inside tmux, the kitty query is wrapped in tmux passthrough (needs `set -g allow
 - standard output is not a terminal;
 - `TERM` is unset, `dumb`, `linux` or `vt*` (the Linux console and serial lines do not answer);
 - scat runs as a background job (`scat file &`): changing the terminal mode would stop it with `SIGTTOU`;
-- nothing being printed needs it. Only syntax highlighting without an explicit theme and images with `--protocol auto|kitty|sixel` trigger the query.
+- scat was started under the name `cat` and is strict (see [using-as-cat.md](using-as-cat.md));
+- a fresh [cache](#cache) entry exists;
+- nothing being printed needs it. The query is made on first use, by what needs it:
+
+| Needs the query | Does not |
+|---|---|
+| a file with a known syntax, highlighted without a fixed theme (to pick `theme_dark` or `theme_light`) | plain text with no syntax found, empty files, files over `max_highlight_bytes` |
+| markdown code blocks, without a fixed theme | colours off (`--color never`, `NO_COLOR`, piped), `--theme`, `SCAT_THEME`, `theme` in `[defaults]` or a rule |
+| markdown inline code, without a fixed theme (with one, the theme's own background decides) | 16-colour terminals (the `ansi` theme) |
+| images, PDF pages, audio cover art and video frames with `--protocol auto\|kitty\|sixel` | diffs, logs, tables, hex dumps, directory listings, `--raw`, cat flags |
+| `--play` with video (picks mpv's output) | `--play` with audio |
+
+## Cache
+
+So that a series of commands in one terminal does not pay for the query every time (a few ms on a real terminal, the full 200 ms on a pty that never answers), the result is kept for 10 minutes in `$XDG_RUNTIME_DIR/scat/term-<key>`.
+
+- **Key:** a hash of the controlling terminal's device number, the session id (`getsid`), `TERM`, `TERM_PROGRAM`, `KITTY_WINDOW_ID` and `TMUX_PANE`. A new tab, window, login, ssh session or tmux pane gets its own entry.
+- **Stored:** kitty graphics support, sixel support, cell size in pixels, background colour, and whether the terminal answered at all. "Did not answer" is cached too, so a silent pty costs 200 ms once, not on every run.
+- **Not stored:** a query that could not run (background job, typeahead) is not cached.
+- **Lifetime:** 10 minutes. The background colour changes when you switch the terminal's theme; scat picks that up once the entry expires. Delete `$XDG_RUNTIME_DIR/scat/` to pick it up at once, or run `scat --diagnose`, which always queries and refreshes the entry.
+- **Safety:** the directory is created with mode 0700 and files with 0600. An entry that is not owned by you, is readable by others, is a symlink or does not parse is ignored.
+- **Off:** without `XDG_RUNTIME_DIR` (or without a controlling terminal) there is no cache and every run that needs the answers queries.
 
 ## `scat --diagnose`
 
 Prints everything scat detected:
 
-- config file and how many rules it has, plus any warnings;
+- config file and how many rules it has, plus any warnings, and whether scat was invoked as `cat` (strict or rendering);
+- the paging facts: standard input a terminal, foreground, own process group, and whether `auto` would page (see [paging.md](paging.md#why-the-process-group));
 - whether stdout is a terminal, colour on/off, colour depth, UTF-8 locale, multiplexer;
 - the relevant environment variables (`TERM`, `TERM_PROGRAM`, `COLORTERM`, `KITTY_WINDOW_ID`, ...);
+- whether a fresh cache entry existed (the query itself always runs fresh and refreshes the entry);
 - the query results: terminal version, kitty graphics, sixel, cell size, background, how long it took;
 - which image output is used and why (see [images.md](images.md));
 - helper tools found on `PATH` (`pdftoppm`, `ffmpeg`, `mpv`, ...).

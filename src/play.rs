@@ -140,11 +140,11 @@ pub fn run(cli: &Cli) -> i32 {
             Ok(()) => {}
             Err(PlayError::Interrupted) => return 130,
             Err(PlayError::NoMpv) => {
-                eprintln!("scat: {name}: {}", PlayError::NoMpv.message());
+                crate::report!("{name}: {}", PlayError::NoMpv.message());
                 return 1;
             }
             Err(err) => {
-                eprintln!("scat: {name}: {}", err.message());
+                crate::report!("{name}: {}", err.message());
                 status = 1;
             }
         }
@@ -153,13 +153,7 @@ pub fn run(cli: &Cli) -> i32 {
 }
 
 fn query_capabilities() -> Option<query::Capabilities> {
-    if io::stdout().is_terminal() && !term::is_basic_terminal() {
-        query::query(query::DEFAULT_TIMEOUT)
-            .ok()
-            .filter(|c| c.answered)
-    } else {
-        None
-    }
+    term::capabilities(io::stdout().is_terminal())
 }
 
 #[cfg(test)]
