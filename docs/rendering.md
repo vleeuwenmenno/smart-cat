@@ -8,13 +8,14 @@ scat reads the first 8 KiB of each file to decide what it is:
 
 | Detected | Default behaviour |
 |---|---|
+| markdown (`.md`, `.markdown`, `.mdown`, `.mkd`) | [rendered](markdown.md) |
 | text with a known language | [syntax highlighted](syntax-highlighting.md) |
 | other text | printed, with control characters made safe |
 | binary | not printed; a note on stderr names the type and size (`--raw` prints it anyway) |
 
 Text means no NUL bytes and at most 5% invalid UTF-8, so Latin-1 files still count as text. The type comes from magic bytes (`infer`), for example `image/png` or `application/x-executable`.
 
-A [config rule](configuration.md) can pick another renderer per file: `code`, `text` or `raw`.
+A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `markdown` or `raw`.
 
 ## Layout
 

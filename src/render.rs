@@ -1,6 +1,6 @@
 //! Per-file dispatch: cat-compatible output or rendering.
 
-use std::io::{self, BufRead, BufWriter, IsTerminal, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, IsTerminal, Read, Write};
 
 use syntect::easy::HighlightLines;
 
@@ -10,6 +10,7 @@ use crate::config::{AnsiMode, Config, FileSettings, Renderer};
 use crate::detect::{self, Kind, SNIFF_BYTES};
 use crate::highlight::{self, Assets};
 use crate::input::{self, Input, InputKind, Source};
+use crate::markdown;
 use crate::term::{self, ColorDepth, query};
 use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
 
@@ -83,6 +84,13 @@ fn process<W: Write>(
         .config
         .settings_for(file_name.as_deref(), &detected.mime);
 
+    let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+    let as_markdown = match settings.renderer {
+        Renderer::Markdown => true,
+        Renderer::Auto => markdown::is_markdown(file_name.as_deref(), language),
+        _ => false,
+    };
+
     match settings.renderer {
         Renderer::Raw => write_cat(&mut input, out, &ctx.cat_options, cat_state),
         Renderer::Auto if detected.kind == Kind::Binary => {
@@ -98,8 +106,79 @@ fn process<W: Write>(
             );
             Ok(())
         }
+        _ if as_markdown => {
+            render_markdown(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
+        }
         _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
     }
+}
+
+/// Renders a markdown file. Files over `max_highlight_bytes` are shown as text instead.
+fn render_markdown<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+    head: &[u8],
+) -> io::Result<()> {
+    let limit = ctx.config.defaults.max_highlight_bytes;
+    if matches!(input.kind, InputKind::Regular { size } if size > limit) {
+        return render_text(input, out, ctx, settings, file_name, head);
+    }
+    let mut data = Vec::new();
+    (&mut input.reader).take(limit + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > limit {
+        // A stream too large to hold: put back what was read and show it as text.
+        let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+        input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+        return render_text(input, out, ctx, settings, file_name, head);
+    }
+    let text = String::from_utf8_lossy(&data);
+
+    let light = ctx.colors && ctx.depth != ColorDepth::Ansi16 && ctx.background_is_light();
+    let opts = markdown::Options {
+        width: markdown::render_width(ctx.stdout_tty),
+        colors: ctx.colors,
+        depth: ctx.depth,
+        utf8: ctx.utf8,
+        hyperlinks: ctx.colors && ctx.stdout_tty && !term::is_basic_terminal(),
+        light,
+        tab_width: settings.tab_width,
+    };
+    let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
+        let theme_name = ctx.theme_name(settings);
+        let assets = ctx.assets.get_or_insert_with(Assets::load);
+        let syntax = assets.find_syntax(Some(lang), None, "")?;
+        let theme = assets
+            .theme(&theme_name)
+            .or_else(|| assets.theme(&ctx.config.defaults.theme_dark))?;
+        let mut highlighter = HighlightLines::new(syntax, theme);
+        let mut lines = Vec::new();
+        for line in syntect::util::LinesWithEndings::from(code) {
+            let regions = highlighter.highlight_line(line, &assets.syntaxes).ok()?;
+            let mut encoded = Vec::with_capacity(line.len() * 2);
+            let mut column = 0;
+            for (style, piece) in regions {
+                let piece = piece.trim_end_matches(['\n', '\r']);
+                if piece.is_empty() {
+                    continue;
+                }
+                encoded.extend_from_slice(highlight::style_sgr(style, ctx.depth).as_bytes());
+                sanitize(
+                    &mut encoded,
+                    piece.as_bytes(),
+                    SgrMode::Escape,
+                    settings.tab_width,
+                    &mut column,
+                );
+            }
+            encoded.extend_from_slice(RESET);
+            lines.push(encoded);
+        }
+        Some(lines)
+    };
+    out.write_all(&markdown::render(&text, &opts, &mut highlight))
 }
 
 fn write_cat<W: Write>(
@@ -350,6 +429,20 @@ pub fn sanitize_str(text: &str) -> String {
     let mut out = Vec::with_capacity(text.len());
     let mut column = 0;
     sanitize(&mut out, text.as_bytes(), SgrMode::Escape, 1, &mut column);
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Sanitizes one line of a file for display, expanding tabs to `tab_width` columns.
+pub fn sanitize_line(text: &str, tab_width: usize) -> String {
+    let mut out = Vec::with_capacity(text.len());
+    let mut column = 0;
+    sanitize(
+        &mut out,
+        text.as_bytes(),
+        SgrMode::Escape,
+        tab_width,
+        &mut column,
+    );
     String::from_utf8_lossy(&out).into_owned()
 }
 

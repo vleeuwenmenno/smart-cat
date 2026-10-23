@@ -28,6 +28,8 @@ pub enum Renderer {
     Text,
     /// Exactly what cat prints.
     Raw,
+    /// Rendered markdown.
+    Markdown,
 }
 
 impl fmt::Display for Renderer {
@@ -37,6 +39,7 @@ impl fmt::Display for Renderer {
             Renderer::Code => "code",
             Renderer::Text => "text",
             Renderer::Raw => "raw",
+            Renderer::Markdown => "markdown",
         })
     }
 }
