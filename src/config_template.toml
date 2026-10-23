@@ -1,0 +1,52 @@
+# scat configuration
+#
+# Location: $XDG_CONFIG_HOME/scat/config.toml (usually ~/.config/scat/config.toml).
+# Override with --config PATH or SCAT_CONFIG. Show the effective config with
+# `scat --print-config`, and how a file is handled with `scat --diagnose FILE`.
+#
+# Precedence: command line flags > SCAT_* environment variables > [[rule]] > [defaults].
+
+[defaults]
+# When to use colours: "auto", "always" or "never". NO_COLOR and CLICOLOR_FORCE are honoured.
+color = "auto"
+
+# Fixed theme for every file. Leave unset to pick theme_dark or theme_light from the
+# terminal's background colour. `scat --list-themes` shows the names.
+# theme = "Nord"
+theme_dark = "Monokai Extended"
+theme_light = "Monokai Extended Light"
+
+# Show a line number gutter when rendering to a terminal. `scat -p` hides it for one run.
+# Piped output never gets numbers unless -n is given, exactly like cat.
+line_numbers = true
+
+# Tabs are expanded to this many columns when rendering.
+tab_width = 4
+
+# Escape sequences already in a file: "keep-sgr" keeps colours, "escape" shows them as ^[.
+ansi = "keep-sgr"
+
+# Files larger than this are shown without syntax highlighting.
+max_highlight_bytes = 16777216
+
+[update]
+# "stable" or "prerelease" (used by `scat --update`).
+channel = "stable"
+
+# Rules adjust settings per file. Every matching rule applies, in order, and later rules
+# override earlier ones. A match can use `ext`, `name` (exact file name) and `mime`
+# (wildcards like "text/*"); each takes a string or a list. All given criteria must match.
+#
+# renderer: "auto" (default), "code" (highlighted), "text" (no highlighting), "raw" (exactly cat)
+
+# [[rule]]
+# match = { ext = ["md", "txt"] }
+# line_numbers = false
+
+# [[rule]]
+# match = { name = ["Jenkinsfile"] }
+# language = "Groovy"
+
+# [[rule]]
+# match = { ext = "log" }
+# renderer = "text"

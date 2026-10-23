@@ -1,0 +1,59 @@
+# AGENTS.md
+
+`scat` (project name smart-cat, crate `smart-cat`, binary `scat`) is a cat replacement for Linux that renders files when writing to a terminal.
+
+## Commands
+
+Use the Makefile targets, not raw cargo commands. They carry `--locked` and the CI flags.
+
+| Task | Command |
+|---|---|
+| List targets | `make` (the default goal is a coloured help) |
+| Install locally | `make install` (native build to `~/.local/bin`, no musl needed) |
+| Build (debug) | `make build` |
+| Run | `make run ARGS="-n src/main.rs"` |
+| Test | `make test` |
+| Lint (clippy, warnings are errors) | `make lint` |
+| Format | `make fmt` |
+| Everything CI checks | `make check` |
+| Static release archive | `make dist` (uses `musl-gcc`, falls back to `gcc` for the host CPU; override with `DIST_CC=`) |
+| Release | `make bump VERSION=x.y.z` then `git push --follow-tags` |
+
+Keep the help text in the `help` target in sync when adding targets.
+
+Run `make check` before handing work back.
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `src/main.rs` | entry point and dispatch of info commands |
+| `src/cli.rs` | clap definition; GNU cat flags plus scat flags |
+| `src/cat.rs` | byte-exact GNU cat behaviour (`-n -b -s -E -T -v`) |
+| `src/render.rs` | per-file dispatch, text rendering, control-character sanitizing |
+| `src/highlight.rs` | syntect + two-face (bat's syntaxes and themes), colour reduction |
+| `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
+| `src/input.rs` | opening files and stdin, file kinds |
+| `src/config.rs` + `src/config_template.toml` | TOML config, rules, `--init-config` |
+| `src/term/` | colour depth, env hints, and the batched `/dev/tty` capability query |
+| `src/diagnose.rs` | `--diagnose` report |
+| `src/update.rs` | `--update` / `--check-update` from GitHub releases |
+| `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
+| `install.sh` | curl-pipe installer (POSIX sh) |
+| `docs/` | one page per feature; `docs/research.md` holds the background research |
+
+## Rules that must not break
+
+1. **Piped output is cat.** When stdout is not a terminal (and `--force-render` is not set), output must be byte-identical to GNU cat for the same flags. `tests/cat_compat.rs` enforces this; add fixtures when touching `cat.rs`.
+2. **Never pass a file's escape sequences through unchecked** when rendering. Only SGR colour sequences may pass (config `ansi = "keep-sgr"`); everything else is shown as `^X`. Escapes scat emits itself are fine.
+3. **A broken config never stops scat from printing.** It becomes a warning and the defaults apply.
+4. **External programs run with argv arrays**, never through `sh -c`, and file names are passed as single arguments.
+5. **Startup time matters.** Load heavy assets (syntaxes, themes) lazily and only for files that need them. Plain `scat file` must stay close to `cat`.
+6. **Terminal queries** only happen on a real terminal, never for `TERM=dumb|linux`, and always restore the terminal mode.
+
+## Conventions
+
+- Rust 2024 edition. Errors to the user follow coreutils style: `scat: NAME: message`.
+- New renderers get a `Renderer` variant only when implemented; do not add config keys for features that do not exist yet.
+- Each user-facing feature has a page in `docs/`. Update it in the same change as the code. Keep `README.md` short: install, a few examples, link to docs.
+- Release builds are static musl binaries for x86_64 and aarch64. Asset names are version-less (`scat-<target>.tar.gz` + `.sha256`) because `install.sh` and `scat --update` depend on them.

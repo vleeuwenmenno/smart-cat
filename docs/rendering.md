@@ -1,0 +1,41 @@
+# Rendering
+
+When standard output is a terminal, scat renders files instead of copying bytes. `-f` / `--force-render` renders even into a pipe (useful with `less -R` or for testing). `--raw` turns rendering off.
+
+## What gets rendered
+
+scat reads the first 8 KiB of each file to decide what it is:
+
+| Detected | Default behaviour |
+|---|---|
+| text with a known language | [syntax highlighted](syntax-highlighting.md) |
+| other text | printed, with control characters made safe |
+| binary | not printed; a note on stderr names the type and size (`--raw` prints it anyway) |
+
+Text means no NUL bytes and at most 5% invalid UTF-8, so Latin-1 files still count as text. The type comes from magic bytes (`infer`), for example `image/png` or `application/x-executable`.
+
+A [config rule](configuration.md) can pick another renderer per file: `code`, `text` or `raw`.
+
+## Layout
+
+- A line number gutter is shown by default: `   1 │ code`. `-p` / `--plain` hides it for one run; `line_numbers = false` in the [config](configuration.md) hides it by default, per file type if you like. `-n` / `--line-numbers` turns it back on.
+- `-b` leaves empty lines unnumbered; `-s` collapses runs of empty lines.
+- Tabs are expanded to `tab_width` columns (default 4).
+- CRLF line endings are shown as plain line ends.
+
+## Escape sequences in files
+
+Printing an untrusted file straight to a terminal is risky: escape sequences can change the window title, write to the clipboard (OSC 52), move the cursor to hide text, or make some terminals send input back. When rendering, scat:
+
+- shows every control character as `^X` (`^[` for ESC), like `cat -v`;
+- keeps SGR colour sequences (`ESC[...m`) so coloured logs still look right, unless `ansi = "escape"` is set, in which case they are shown as `^[[31m`;
+- strips SGR sequences when colours are off (`NO_COLOR`, `--color=never`);
+- replaces C1 control characters (U+0080 to U+009F) and invalid UTF-8 with `�`;
+- resets colours at the end of each file.
+
+Piped output is never changed: that is cat's contract.
+
+## Limits
+
+- Files larger than `max_highlight_bytes` (16 MiB by default) are shown without highlighting.
+- Lines longer than 1 MiB switch the rest of the file to unhighlighted output.

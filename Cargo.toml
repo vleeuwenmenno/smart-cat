@@ -1,0 +1,33 @@
+[package]
+name = "smart-cat"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "scat: a smarter cat that renders code, markdown, images and more in the terminal"
+repository = "https://github.com/vleeuwenmenno/smart-cat"
+readme = "README.md"
+keywords = ["cat", "terminal", "syntax-highlighting", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "scat"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive", "env", "wrap_help"] }
+infer = "0.22.0"
+libc = "0.2.191"
+rustix = { version = "1.1.5", features = ["termios", "event", "fs", "stdio"] }
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+syntect = { version = "5.3.0", default-features = false, features = ["parsing", "regex-onig"] }
+toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "display"] }
+two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
