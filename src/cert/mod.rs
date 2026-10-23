@@ -7,9 +7,11 @@
 
 mod der;
 mod keys;
+pub mod redact;
 mod x509;
 
 use std::io::{self, Write};
+use std::ops::Range;
 
 use crate::render::sanitize_line;
 
@@ -91,6 +93,13 @@ fn ssh_named(file_name: Option<&str>) -> bool {
     })
 }
 
+/// Whether the `auto` renderer may show this file as certificates or keys at all,
+/// judged by name only: a known extension, an SSH key list name, or no extension.
+/// Text shown for such a file by `auto` gets its private key blocks hidden.
+pub fn eligible(file_name: Option<&str>) -> bool {
+    ssh_named(file_name) || extension(file_name).is_none_or(|e| EXTENSIONS.contains(&e.as_str()))
+}
+
 fn claimed_label(label: &str) -> bool {
     LABELS.contains(&label) || label.contains("PRIVATE KEY")
 }
@@ -101,20 +110,29 @@ fn claimed_label(label: &str) -> bool {
 pub fn wants(file_name: Option<&str>, head: &[u8]) -> bool {
     let ext = extension(file_name);
     // `infer` calls PEM text `application/x-x509-ca-cert` (binary), so decide here.
+    let known_name = ssh_named(file_name);
+    let name_ok = known_name || ext.as_deref().is_none_or(|e| EXTENSIONS.contains(&e));
+    // PEM text with a stray byte that is not UTF-8 still counts as PEM.
+    let has_block = || {
+        String::from_utf8_lossy(head)
+            .lines()
+            .any(|line| begin_label(line).is_some_and(claimed_label))
+    };
     if is_binary(head) {
+        if name_ok && !head.contains(&0) && has_block() {
+            return true;
+        }
         // Parsed in full later; a file that does not parse gets the hex dump.
         return matches!(ext.as_deref(), Some("der" | "cer" | "crt"))
             && head.first() == Some(&der::SEQUENCE);
     }
-    let known_name = ssh_named(file_name);
-    if !known_name && ext.as_deref().is_some_and(|e| !EXTENSIONS.contains(&e)) {
+    if !name_ok {
         return false;
     }
-    let text = String::from_utf8_lossy(head);
-    let mut lines = text.lines();
-    if lines.any(|line| begin_label(line).is_some_and(claimed_label)) {
+    if has_block() {
         return true;
     }
+    let text = String::from_utf8_lossy(head);
     // The first line that is not blank or a comment must be a key line.
     text.lines()
         .map(str::trim)
@@ -142,20 +160,51 @@ pub fn render<W: Write>(
     file_name: Option<&str>,
     opts: &Options,
 ) -> io::Result<bool> {
-    let Ok(text) = std::str::from_utf8(data) else {
-        return match der_summary(data, opts.now) {
-            Some(summary) => {
+    let text = match std::str::from_utf8(data) {
+        Ok(text) => std::borrow::Cow::Borrowed(text),
+        Err(_) => {
+            if let Some(summary) = der_summary(data, opts.now) {
                 write_summary(out, &summary, opts)?;
-                Ok(true)
+                return Ok(true);
             }
-            None => Ok(false),
-        };
+            // PEM text with a stray byte that is not UTF-8: still a text file.
+            if data.contains(&0) {
+                return Ok(false);
+            }
+            String::from_utf8_lossy(data)
+        }
     };
+    let text = text.as_ref();
     if let Some(entries) = ssh_entries(text, file_name) {
         write_ssh(out, &entries, file_name, opts)?;
         return Ok(true);
     }
-    let segments = pem_segments(text);
+    let all: Vec<&str> = text.lines().collect();
+    // What each line shows when it is printed as text: private key bodies are hidden
+    // wherever they are, also inside blocks that did not parse or that a nested BEGIN
+    // cut short. The scanner sees every line, so its state follows the whole file.
+    let note = format!("({HIDDEN_NOTE})");
+    let mut scanner = redact::Scanner::new();
+    let shown: Vec<Vec<String>> = all
+        .iter()
+        .map(|line| {
+            let mut out = Vec::new();
+            scanner.push(line.as_bytes(), &note, &mut out);
+            if out.is_empty() {
+                // A blank line, or a hidden one.
+                return if scanner.hiding() {
+                    Vec::new()
+                } else {
+                    vec![String::new()]
+                };
+            }
+            let out = out.strip_suffix(b"\n").unwrap_or(&out);
+            out.split(|&b| b == b'\n')
+                .map(|piece| String::from_utf8_lossy(piece).into_owned())
+                .collect()
+        })
+        .collect();
+    let segments = pem_segments(&all);
     let mut certs = Vec::new();
     let mut parts = Vec::new();
     let mut recognised = false;
@@ -183,8 +232,8 @@ pub fn render<W: Write>(
     // Summaries get one blank line around them.
     let mut last = Last::Nothing;
     for part in &parts {
-        if let Part::Text(lines) = part {
-            for line in lines {
+        if let Part::Text(range) = part {
+            for line in range.clone().flat_map(|idx| &shown[idx]) {
                 let blank = line.trim().is_empty();
                 if last == Last::Summary {
                     if blank {
@@ -246,8 +295,8 @@ enum Last {
     Summary,
 }
 
-enum Part<'a> {
-    Text(Vec<&'a str>),
+enum Part {
+    Text(Range<usize>),
     Cert(usize),
     Summary(Summary),
 }
@@ -301,37 +350,43 @@ struct Block<'a> {
     headers: Vec<(String, String)>,
     /// Base64 body; `None` when the block has no END line.
     body: Option<Vec<u8>>,
-    /// The original lines, for blocks that are shown as text.
-    lines: Vec<&'a str>,
+    /// Indices of the original lines, for blocks that are shown as text.
+    lines: Range<usize>,
 }
 
 enum Segment<'a> {
-    Text(Vec<&'a str>),
+    Text(Range<usize>),
     Block(Block<'a>),
 }
 
-/// Splits text into PEM blocks and the lines between them. A block without an END line
-/// runs to the end of the text.
-fn pem_segments(text: &str) -> Vec<Segment<'_>> {
+/// Splits lines into PEM blocks and the lines between them. A block without an END
+/// line runs to the next BEGIN line or the end of the text, so a block nested in an
+/// unfinished one (a private key inside a cut-off certificate) is still its own block.
+fn pem_segments<'a>(lines: &[&'a str]) -> Vec<Segment<'a>> {
     let mut segments = Vec::new();
-    let mut plain: Vec<&str> = Vec::new();
-    let mut lines = text.lines().peekable();
-    while let Some(line) = lines.next() {
-        let Some(label) = begin_label(line) else {
-            plain.push(line);
+    let mut plain_start = 0;
+    let mut idx = 0;
+    while idx < lines.len() {
+        let Some(label) = begin_label(lines[idx]) else {
+            idx += 1;
             continue;
         };
-        if !plain.is_empty() {
-            segments.push(Segment::Text(std::mem::take(&mut plain)));
+        if plain_start < idx {
+            segments.push(Segment::Text(plain_start..idx));
         }
+        let start = idx;
+        idx += 1;
         let end = format!("-----END {label}-----");
-        let mut block_lines = vec![line];
         let mut headers = Vec::new();
         let mut body = String::new();
         let mut in_headers = true;
         let mut closed = false;
-        for inner in lines.by_ref() {
-            block_lines.push(inner);
+        while idx < lines.len() {
+            let inner = lines[idx];
+            if begin_label(inner).is_some() {
+                break;
+            }
+            idx += 1;
             let trimmed = inner.trim();
             if trimmed == end {
                 closed = true;
@@ -357,11 +412,12 @@ fn pem_segments(text: &str) -> Vec<Segment<'_>> {
             } else {
                 None
             },
-            lines: block_lines,
+            lines: start..idx,
         }));
+        plain_start = idx;
     }
-    if !plain.is_empty() {
-        segments.push(Segment::Text(plain));
+    if plain_start < lines.len() {
+        segments.push(Segment::Text(plain_start..lines.len()));
     }
     segments
 }
@@ -694,5 +750,128 @@ mod tests {
         let out = String::from_utf8(out).unwrap();
         assert!(!out.contains("MIIEsecret"), "{out}");
         assert!(out.contains(HIDDEN_NOTE));
+    }
+
+    /// What `render_cert` prints in `auto`: the view, or the redacted text fallback.
+    fn auto_view(data: &[u8]) -> String {
+        let opts = Options {
+            colors: false,
+            utf8: true,
+            tab_width: 4,
+            now: 0,
+        };
+        let mut out = Vec::new();
+        if !render(&mut out, data, Some("x.pem"), &opts).unwrap() {
+            use std::io::Read;
+            out.clear();
+            redact::Redacting::new(data).read_to_end(&mut out).unwrap();
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// Many malformed arrangements of a private key: no line of its body may show.
+    #[test]
+    fn malformed_private_keys_never_show_their_body() {
+        let key = include_str!("../../tests/fixtures/test-keys/rsa-pkcs8.key");
+        let cert = include_str!("../../tests/fixtures/test-keys/leaf.pem");
+        let body: Vec<&str> = key.lines().filter(|l| !l.starts_with("-----")).collect();
+        assert!(body.len() > 5);
+        let labels = [
+            "PRIVATE KEY",
+            "ENCRYPTED PRIVATE KEY",
+            "OPENSSH PRIVATE KEY",
+            "RSA PRIVATE KEY",
+            "private key",
+            "  PRIVATE   KEY ",
+        ];
+        let cert_head: String = cert.lines().take(4).map(|l| format!("{l}\n")).collect();
+        let contexts: [(&str, &str); 6] = [
+            ("", ""),
+            (cert, ""),
+            (&cert_head, ""),
+            ("notes\n-----END PRIVATE KEY-----\n", "more notes\n"),
+            (
+                "-----BEGIN CERTIFICATE-----\n",
+                "-----END CERTIFICATE-----\n",
+            ),
+            ("", cert),
+        ];
+        let junk = [
+            "",
+            "Proc-Type: 4,ENCRYPTED\n",
+            "# comment\n\n",
+            "-----BEGIN CERTIFICATE-----\n",
+            "-----END CERTIFICATE-----\n",
+        ];
+        let mut cases = 0;
+        for label in labels {
+            for (before, after) in contexts {
+                for junk in junk {
+                    for end in [
+                        format!("-----END {label}-----\n"),
+                        String::new(),
+                        "-----END SOMETHING ELSE-----\n".to_string(),
+                        format!("-----end {}-----\n", label.to_lowercase()),
+                    ] {
+                        for indent in ["", "  "] {
+                            let mut text = format!("{before}{indent}-----BEGIN {label}-----  \n");
+                            for (idx, line) in body.iter().enumerate() {
+                                if idx == body.len() / 2 {
+                                    text.push_str(junk);
+                                }
+                                text.push_str(line);
+                                text.push('\n');
+                            }
+                            text.push_str(&end);
+                            text.push_str(after);
+                            for crlf in [false, true] {
+                                let data = if crlf {
+                                    text.replace('\n', "\r\n")
+                                } else {
+                                    text.clone()
+                                };
+                                for truncate in [data.len(), data.len() * 2 / 3] {
+                                    let data = &data.as_bytes()[..truncate];
+                                    let out = auto_view(data);
+                                    for line in &body {
+                                        // A cut-off file may end inside a line.
+                                        let probe = &line[..line.len().min(24)];
+                                        assert!(
+                                            !out.contains(probe),
+                                            "body shown for {label:?} / {before:?} / {junk:?} / {end:?}:\n{out}"
+                                        );
+                                    }
+                                    cases += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cases > 1000);
+    }
+
+    #[test]
+    fn nested_key_in_unfinished_certificate_is_hidden() {
+        let key = include_str!("../../tests/fixtures/test-keys/ed25519-pkcs8.key");
+        let cert = include_str!("../../tests/fixtures/test-keys/leaf.pem");
+        let data = format!("{cert}-----BEGIN CERTIFICATE-----\n{key}");
+        let out = auto_view(data.as_bytes());
+        assert!(
+            !out.contains("MC4CAQAwBQYDK2VwBCIEIOQyHQInCcsZcOQCbYxMwib0c2TPTBdWMmvk"),
+            "{out}"
+        );
+        assert!(out.contains("Private key"), "{out}");
+    }
+
+    #[test]
+    fn stray_invalid_byte_keeps_the_view() {
+        let key = include_str!("../../tests/fixtures/test-keys/ed25519-pkcs8.key");
+        let mut data = key.as_bytes().to_vec();
+        data.extend_from_slice(b"# notes\n\xff\n");
+        let out = auto_view(&data);
+        assert!(out.contains("Private key"), "{out}");
+        assert!(!out.contains("MC4CAQAw"), "{out}");
     }
 }

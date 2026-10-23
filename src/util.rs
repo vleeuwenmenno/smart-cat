@@ -4,11 +4,30 @@ use std::sync::OnceLock;
 
 /// Prints a message on standard error with the program name in front, like coreutils:
 /// `scat: NAME: message`, or `cat: ...` when scat was started under the name `cat`.
+///
+/// Messages often carry text from a file (a part name, a table name, a decoder error),
+/// so the whole message is sanitized: control characters and escape sequences are
+/// shown as `^X`, never sent to the terminal.
 #[macro_export]
 macro_rules! report {
     ($($arg:tt)*) => {
-        eprintln!("{}: {}", $crate::util::prog_name(), format_args!($($arg)*))
+        eprintln!(
+            "{}: {}",
+            $crate::util::prog_name(),
+            $crate::util::sanitize_message(&format!($($arg)*))
+        )
     };
+}
+
+/// Makes a message safe for the terminal (see [`report!`]). Line breaks are kept, so a
+/// multi-line message stays readable; every other control character becomes `^X`.
+/// Text that is already sanitized comes out unchanged.
+pub fn sanitize_message(message: &str) -> String {
+    message
+        .split('\n')
+        .map(crate::render::sanitize_str)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Whether a program name (`argv[0]`) is `cat`, after stripping any directory.
@@ -168,6 +187,18 @@ mod tests {
         assert!(!is_cat_name(OsStr::new("scat")));
         assert!(!is_cat_name(OsStr::new("/bin/cat2")));
         assert!(!is_cat_name(OsStr::new("")));
+    }
+
+    #[test]
+    fn messages_are_sanitized_once() {
+        let message = "missing ppt/slides/\x1b]0;title\x07.xml\nsecond\tline";
+        let clean = sanitize_message(message);
+        assert!(
+            !clean.contains('\x1b') && !clean.contains('\x07'),
+            "{clean:?}"
+        );
+        assert_eq!(clean, "missing ppt/slides/^[]0;title^G.xml\nsecond line");
+        assert_eq!(sanitize_message(&clean), clean);
     }
 
     #[test]

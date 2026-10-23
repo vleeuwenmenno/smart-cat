@@ -82,6 +82,14 @@ Private key
 
 Any PEM block whose label contains `PRIVATE KEY` is hidden, including blocks that do not parse, blocks without an `END` line, and `PGP PRIVATE KEY BLOCK`. A file with a private key in the middle of other text shows the text and hides only the key.
 
+Hiding also covers every case where `auto` (or `cert`) shows a key file as text or as a hex dump instead of the summary:
+
+- files over 4 MiB, files with bytes that are not UTF-8, and files whose blocks do not parse;
+- files with a known extension (or none) where the `BEGIN` line comes after the first 8 KiB, so the summary is not chosen;
+- broken PEM: a private key inside an unfinished certificate, a lowercase or oddly spaced label (`-----begin private key-----`), a marker after other text on the line, CRLF line ends.
+
+In these views the `BEGIN` line stays and the body is replaced by one line, `(private key material hidden; use --raw or a pipe to print it)`, up to the matching `END` line. Without a matching `END` line everything after the `BEGIN` line is hidden. Line numbers in such a text view count the shown lines, not the lines of the file.
+
 ### Seeing the raw file
 
 | Command | Prints |
@@ -108,11 +116,12 @@ match = { ext = "chain" }
 renderer = "cert"
 ```
 
-`renderer = "cert"` on a file with nothing recognisable shows it as text (or a hex dump for binary files), without an error. The same happens when a certificate does not parse.
+`renderer = "cert"` on a file with nothing recognisable shows it as text (or a hex dump for binary files), without an error. The same happens when a certificate does not parse. Private key bodies stay hidden in that text or hex dump.
 
 ## Limits
 
-- Files over 4 MiB are shown as text.
+- Files over 4 MiB are shown as text, with private key bodies hidden.
+- Key markers are found per line; in a line longer than 64 KiB a marker that spans a 64 KiB boundary is not seen.
 - Signatures are not verified; `self-signed` means the issuer equals the subject (and the authority key id, if any, is the certificate's own).
 - PGP/GPG key blocks are not decoded (public ones are shown as text, private ones are hidden).
 - PKCS#12 (`.p12`, `.pfx`) and PKCS#7 bundles are not decoded.

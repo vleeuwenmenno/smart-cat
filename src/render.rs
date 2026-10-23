@@ -446,7 +446,12 @@ fn process<W: Write>(
             render_binary(&mut input, out, ctx, source)
         }
         Renderer::Hex => render_hex(&mut input, out, ctx),
-        Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
+        Renderer::Auto if detected.kind == Kind::Binary => {
+            if crate::cert::eligible(file_name.as_deref()) {
+                hide_private_keys(&mut input);
+            }
+            render_hex(&mut input, out, ctx)
+        }
         Renderer::Notebook => {
             render_notebook(&mut input, out, ctx, &settings, file_name.as_deref())
         }
@@ -457,7 +462,14 @@ fn process<W: Write>(
             let doc = (&settings, file_name.as_deref(), source);
             render_markdown(&mut input, out, ctx, doc, &head)
         }
-        _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
+        _ => {
+            // A key file the certificate view did not claim (the BEGIN line is past
+            // the sniffed head, or its label is malformed) still has its key hidden.
+            if settings.renderer == Renderer::Auto && crate::cert::eligible(file_name.as_deref()) {
+                hide_private_keys(&mut input);
+            }
+            render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
+        }
     };
     if truncated.is_some_and(|hit| hit.get()) {
         out.flush()?;
@@ -575,8 +587,20 @@ fn render_video<W: Write>(
     })
 }
 
+/// Replaces the input with one whose private key blocks are hidden (see
+/// `cert::redact`). Used wherever `auto` or `cert` show a key file as text or hex.
+fn hide_private_keys(input: &mut Input) {
+    let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+    input.reader = BufReader::with_capacity(
+        64 * 1024,
+        Box::new(crate::cert::redact::Redacting::new(rest)),
+    );
+    input.fd = None;
+}
+
 /// Certificate and key summaries. Files that hold nothing recognisable (or are over
-/// `cert::MAX_BYTES`) are shown as text or a hex dump instead, without an error.
+/// `cert::MAX_BYTES`) are shown as text or a hex dump instead, without an error, and
+/// with any private key body hidden.
 fn render_cert<W: Write>(
     input: &mut Input,
     out: &mut W,
@@ -606,6 +630,8 @@ fn render_cert<W: Write>(
     let binary = crate::cert::is_binary(&data[..data.len().min(SNIFF_BYTES)]);
     let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
     input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+    // The fallback views never show a private key either.
+    hide_private_keys(input);
     if binary {
         render_hex(input, out, ctx)
     } else {
