@@ -15,6 +15,7 @@ name = "scat"
 path = "src/main.rs"
 
 [dependencies]
+brotli-decompressor = "5.0.3"
 bzip2 = "0.6.1"
 calamine = "0.36"
 clap = { version = "4.6.7", features = ["derive", "env", "wrap_help"] }
@@ -41,6 +42,7 @@ serde_json = "1.0.154"
 sevenz-rust2 = { version = "0.20.2", default-features = false }
 sha1 = "0.11.0"
 sha2 = "0.11.1"
+skrifa = "0.46.2"
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "aac", "alac", "isomp4", "wav", "aiff", "pcm", "adpcm"] }
 syntect = { version = "5.3.0", default-features = false, features = ["parsing", "regex-onig"] }
 tar = { version = "0.4.46", default-features = false }

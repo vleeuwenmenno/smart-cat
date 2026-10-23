@@ -21,10 +21,10 @@ use super::md5;
 /// of freedesktop's "large" thumbnails.
 pub const THUMB_SIDE: u32 = 256;
 
-/// Images and PDFs larger than this get an icon instead of a thumbnail.
+/// Images, PDFs and fonts larger than this get an icon instead of a thumbnail.
 pub const MAX_SOURCE_BYTES: u64 = 64 << 20;
 
-/// Time limit for one video poster frame (ffmpeg) or PDF page (sandboxed helper).
+/// Time limit for one video poster frame (ffmpeg), PDF page or font (sandboxed helpers).
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Largest cached or freedesktop thumbnail file read back.
@@ -40,6 +40,7 @@ pub enum Source {
     Video,
     Pdf,
     Audio,
+    Font,
 }
 
 /// The thumbnail source for a file name, by extension. Files without a known
@@ -58,6 +59,7 @@ pub fn source_for(name: &str) -> Option<Source> {
         "mp3" | "flac" | "ogg" | "oga" | "opus" | "m4a" | "aac" | "wav" | "aiff" | "aif" | "wv"
         | "ape" | "mpc" | "spx" => Source::Audio,
         "pdf" => Source::Pdf,
+        "ttf" | "otf" | "ttc" | "otc" | "woff" | "woff2" => Source::Font,
         _ => return None,
     })
 }
@@ -288,6 +290,18 @@ fn generate(target: &Target, source: Source) -> Made {
                 None => Made::Nothing,
             }
         }
+        Source::Font => {
+            if target.size > MAX_SOURCE_BYTES {
+                return Made::Unavailable;
+            }
+            match read_capped(target.path, MAX_SOURCE_BYTES) {
+                Ok(data) => match crate::font::thumbnail(data, THUMB_SIDE, TOOL_TIMEOUT) {
+                    Some(img) => Made::Image(img),
+                    None => Made::Nothing,
+                },
+                Err(_) => Made::Unavailable,
+            }
+        }
         Source::Audio => match crate::audio::cover_art_bytes(target.path) {
             Some(data) => decode(data, false),
             None => Made::Nothing,
@@ -429,6 +443,7 @@ mod tests {
         assert_eq!(source_for("clip.mkv"), Some(Source::Video));
         assert_eq!(source_for("song.flac"), Some(Source::Audio));
         assert_eq!(source_for("paper.pdf"), Some(Source::Pdf));
+        assert_eq!(source_for("Inter.woff2"), Some(Source::Font));
         assert_eq!(source_for("main.rs"), None);
         assert_eq!(source_for("png"), None);
     }

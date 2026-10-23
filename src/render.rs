@@ -186,6 +186,12 @@ fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     let settings = ctx
         .config
         .settings_for(file_name.as_deref(), &detected.mime);
+    // A font's specimen is an image; only the table alone can be paged.
+    if settings.renderer == Renderer::Font
+        || (settings.renderer == Renderer::Auto && crate::font::wants(&head))
+    {
+        return font_screen(ctx).is_none();
+    }
     let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
     let as_markdown = match settings.renderer {
         Renderer::Markdown => true,
@@ -350,6 +356,8 @@ fn process<W: Write>(
         Renderer::Auto if matches!(source, Source::Path(_)) && crate::sqlite::wants(&head) => {
             render_sqlite(&mut input, out, ctx, source)
         }
+        Renderer::Font => render_font(&mut input, out, ctx, source),
+        Renderer::Auto if crate::font::wants(&head) => render_font(&mut input, out, ctx, source),
         Renderer::Image => render_image(&mut input, out, ctx, source, &head),
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
@@ -1029,6 +1037,32 @@ fn render_archive<W: Write>(
         size,
     };
     archive::render(out, format, &name, source, &opts)
+}
+
+/// Where a font specimen is drawn: on a terminal, or with `--protocol` into a pipe;
+/// never as ASCII art. `None` means the info table alone.
+fn font_screen(ctx: &mut Context) -> Option<crate::image::Screen> {
+    if !ctx.stdout_tty && ctx.cli.protocol.is_none() {
+        return None;
+    }
+    Some(ctx.image_screen()).filter(|s| s.method != crate::image::Method::Ascii)
+}
+
+/// Font view: info table per face, then the specimen when images can be drawn.
+fn render_font<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    source: &Source,
+) -> io::Result<()> {
+    let name = source.display_name();
+    let opts = crate::font::Options {
+        name: &name,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        screen: font_screen(ctx),
+    };
+    crate::font::render(out, input, &opts)
 }
 
 /// SQLite database view; only regular files, SQLite needs to open the path itself.

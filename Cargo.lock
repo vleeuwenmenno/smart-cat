@@ -1779,6 +1779,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 name = "smart-cat"
 version = "0.1.0"
 dependencies = [
+ "brotli-decompressor",
  "bzip2",
  "calamine",
  "clap",
@@ -1805,6 +1806,7 @@ dependencies = [
  "sevenz-rust2",
  "sha1",
  "sha2",
+ "skrifa 0.46.2",
  "symphonia",
  "syntect",
  "tar",

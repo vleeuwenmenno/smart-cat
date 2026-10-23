@@ -9,6 +9,7 @@ mod decompress;
 mod detect;
 mod diagnose;
 mod fastcopy;
+mod font;
 mod generate;
 mod header;
 mod hexdump;
@@ -46,6 +47,9 @@ fn main() {
     }
 
     if let Some(code) = pdf::internal_main() {
+        std::process::exit(code);
+    }
+    if let Some(code) = font::internal_main() {
         std::process::exit(code);
     }
 

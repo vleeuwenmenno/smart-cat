@@ -33,6 +33,7 @@ scat release.tar.gz         # summary and file tree of zip, tar, deb, 7z
 scat report.docx            # Word, PowerPoint, Excel and OpenDocument files as markdown and tables
 scat fullchain.pem          # certificate summaries and expiry; private keys stay hidden
 scat app.db                 # SQLite: tables, schemas, sample rows (opened read-only)
+scat Inter.woff2            # font info (axes, coverage, features) and a rendered specimen
 scat app.log.gz             # decompressed, log levels coloured (diffs too: scat x.patch)
 scat file.txt | grep foo    # piped: identical to cat
 scat --diagnose             # what scat detected about your terminal
