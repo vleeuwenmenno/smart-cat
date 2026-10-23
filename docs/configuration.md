@@ -84,6 +84,12 @@ See [pdf.md](pdf.md).
 |---|---|---|
 | `max_entries` | `500` | entries drawn per [archive listing](archives.md); the rest are counted in a footer. `0` draws all |
 
+## `[office]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_rows` | `200` | data rows shown per spreadsheet sheet before the "more rows" note; `0` shows all; see [office-documents.md](office-documents.md) |
+
 ## `[update]`
 
 | Key | Default | Meaning |
@@ -124,7 +130,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"binary"` ([executable and library summary](binaries.md)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"archive"` (summary and file tree, see [archives.md](archives.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"binary"` ([executable and library summary](binaries.md)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"archive"` (summary and file tree, see [archives.md](archives.md)), `"document"` (docx, pptx, xlsx, odt, ... as markdown, see [office-documents.md](office-documents.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |

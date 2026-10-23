@@ -26,6 +26,7 @@ Background and library choices are in [research.md](research.md).
   - `--play` hands audio and video to mpv
   - [PDF](pdf.md): info header, pages drawn with hayro in a sandboxed child process (poppler fallback), `--pages`, text via `pdftotext`
 - **M4, format pack** (partial)
+  - [office documents](office-documents.md): docx, odt, pptx, odp, xlsx, xls, ods as markdown, with slide and sheet sections
   - CSV/TSV/PSV tables and minified JSON pretty-printing ([data-files.md](data-files.md))
   - transparent `.gz/.xz/.zst/.bz2` decompression ([compressed-files.md](compressed-files.md))
   - diff and log colouring ([diffs-and-logs.md](diffs-and-logs.md))
@@ -43,6 +44,6 @@ Background and library choices are in [research.md](research.md).
 |---|---|
 | M2, images (rest) | kitty Unicode placeholders for tmux; octants; iTerm2 inline images |
 | M3, documents and media (rest) | landlock/seccomp for the PDF helper |
-| M4, format pack (rest) | SQLite, notebooks, certificates, office documents |
+| M4, format pack (rest) | SQLite, notebooks, certificates |
 
 The full list of formats under consideration is in [research.md §8](research.md#8-file-format-index).

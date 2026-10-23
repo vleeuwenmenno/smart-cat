@@ -324,10 +324,7 @@ fn scan_zip<R: Read + Seek>(reader: R, section: &mut Section) -> io::Result<()> 
             break;
         }
         let mut file = archive.by_index_raw(index).map_err(|e| bad("zip", e))?;
-        let path = match file.name() {
-            Ok(name) => name.into_owned(),
-            Err(_) => lossy(file.name_raw()),
-        };
+        let path = file.name().to_owned();
         let mode = file.unix_mode().unwrap_or(0);
         let kind = if file.is_dir() {
             ItemKind::Dir

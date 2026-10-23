@@ -2,7 +2,7 @@
 
 # scat
 
-A smarter `cat`. In a terminal, `scat` renders what it prints: syntax-highlighted code, markdown, images, PDFs, audio and video info, and directory listings. When the output goes to a pipe or a file, `scat` behaves exactly like `cat`.
+A smarter `cat`. In a terminal, `scat` renders what it prints: syntax-highlighted code, markdown, images, PDFs, office documents, audio and video info, and directory listings. When the output goes to a pipe or a file, `scat` behaves exactly like `cat`.
 
 ## Install
 
@@ -30,6 +30,7 @@ scat photo.png              # the image itself (kitty, sixel or Unicode blocks)
 scat doc.pdf --pages 2-4    # PDF info and pages; --text for the text
 scat /usr/bin/ls            # ELF/PE/Mach-O/wasm summary: libraries, symbols, security flags
 scat release.tar.gz         # summary and file tree of zip, tar, deb, 7z
+scat report.docx            # Word, PowerPoint, Excel and OpenDocument files as markdown and tables
 scat app.log.gz             # decompressed, log levels coloured (diffs too: scat x.patch)
 scat file.txt | grep foo    # piped: identical to cat
 scat --diagnose             # what scat detected about your terminal

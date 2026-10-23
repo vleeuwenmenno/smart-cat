@@ -92,6 +92,11 @@ max_pages = 20
 # before a "... more entries" footer; 0 shows every entry.
 max_entries = 500
 
+[office]
+# Word, PowerPoint, Excel and OpenDocument files are shown as markdown. Data rows shown
+# per spreadsheet sheet before a "... more rows" note; 0 shows every row.
+max_rows = 200
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -105,6 +110,7 @@ channel = "stable"
 #   "video" (info view), "table" (CSV/TSV table), "diff" (coloured diff),
 #   "log" (coloured log levels), "hex" (hex dump), "binary" (executable summary), "pdf" (info and pages),
 #   "archive" (summary and file tree),
+#   "document" (docx, pptx, xlsx, odt, ... as markdown),
 #   "raw" (exactly cat)
 
 # [[rule]]

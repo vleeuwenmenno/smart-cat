@@ -19,6 +19,7 @@ mod kv;
 mod linestyle;
 mod listing;
 mod markdown;
+mod office;
 mod pager;
 mod pdf;
 mod play;

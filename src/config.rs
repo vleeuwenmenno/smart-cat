@@ -50,6 +50,8 @@ pub enum Renderer {
     Pdf,
     /// Summary and file tree of zip, tar, deb and 7z archives.
     Archive,
+    /// Word, PowerPoint, Excel and OpenDocument files shown as markdown.
+    Document,
 }
 
 impl fmt::Display for Renderer {
@@ -70,6 +72,7 @@ impl fmt::Display for Renderer {
             Renderer::Log => "log",
             Renderer::Pdf => "pdf",
             Renderer::Archive => "archive",
+            Renderer::Document => "document",
         })
     }
 }
@@ -182,6 +185,7 @@ pub struct Config {
     pub binary: BinaryConfig,
     pub pdf: PdfConfig,
     pub archive: ArchiveConfig,
+    pub office: OfficeConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -255,6 +259,19 @@ pub struct ArchiveConfig {
 impl Default for ArchiveConfig {
     fn default() -> Self {
         Self { max_entries: 500 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OfficeConfig {
+    /// Data rows shown per spreadsheet sheet; 0 shows all of them.
+    pub max_rows: usize,
+}
+
+impl Default for OfficeConfig {
+    fn default() -> Self {
+        Self { max_rows: 200 }
     }
 }
 
