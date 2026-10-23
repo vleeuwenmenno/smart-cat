@@ -185,7 +185,8 @@ fn bash_idioms() {
             "$CAT <(printf proc)",
             "$CAT <<< 'here string'",
             "set -o pipefail; $CAT big big big big | head -c 1 > /dev/null; echo st=$?",
-            "set -o pipefail; $CAT f | head -1; echo st=$?",
+            // `$CAT f | head -1` on a small file is racy (status 0 or 141 depending on
+            // whether cat finishes before head exits), so only the large case is compared.
         ],
         true,
     );
