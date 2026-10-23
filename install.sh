@@ -90,18 +90,24 @@ main() {
 
     ASSET="scat-$TARGET.tar.gz"
 
+    # The releases feed has no rate limit, unlike api.github.com (60 requests an hour).
     # A private or missing repository answers 404 to anonymous requests.
+    FEED=
     check_repo() {
-        fetch "https://api.github.com/repos/$REPO" >/dev/null 2>&1 ||
+        FEED=$(fetch "https://github.com/$REPO/releases.atom" 2>/dev/null) ||
             die "cannot reach github.com/$REPO: the repository is private or does not exist"
+    }
+
+    # The newest release tag in the feed, pre-releases included.
+    newest_tag() {
+        printf '%s\n' "$FEED" | sed -n 's#.*/releases/tag/\([^"<]*\)".*#\1#p' | head -n 1
     }
 
     # Explains a failed download: usually no (stable) release has been published yet.
     missing_release() {
         check_repo
         if [ -z "$VERSION" ] && [ "$PRE" = 0 ]; then
-            NEWEST=$(fetch "https://api.github.com/repos/$REPO/releases?per_page=1" 2>/dev/null |
-                sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+            NEWEST=$(newest_tag)
             if [ -n "$NEWEST" ]; then
                 die "no stable release yet; the newest is pre-release $NEWEST. Install it with --pre"
             fi
@@ -116,8 +122,7 @@ main() {
         BASE="https://github.com/$REPO/releases/download/$VERSION"
     elif [ "$PRE" = 1 ]; then
         check_repo
-        TAG=$(fetch "https://api.github.com/repos/$REPO/releases?per_page=1" |
-            sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+        TAG=$(newest_tag)
         [ -n "$TAG" ] || {
             say "scat install: $REPO has no releases yet; build from source:" >&2
             say "  git clone https://github.com/$REPO && cd ${REPO#*/} && make install" >&2

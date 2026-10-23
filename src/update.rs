@@ -12,25 +12,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use semver::Version;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::config::{Channel, Config};
 
 const DEFAULT_REPO: &str = "vleeuwenmenno/smart-cat";
 
-#[derive(Debug, Deserialize)]
+/// A published release. Pre-releases are the tags with a pre-release part
+/// (`v1.0.0-rc.1`), which is how the release workflow marks them on GitHub.
+#[derive(Debug)]
 struct Release {
-    tag_name: String,
-    prerelease: bool,
-    draft: bool,
-    assets: Vec<Asset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Asset {
-    name: String,
-    browser_download_url: String,
+    tag: String,
 }
 
 pub fn run(check_only: bool, pre: bool, config: &Config) -> i32 {
@@ -90,16 +82,13 @@ fn update(check_only: bool, include_pre: bool) -> Result<(), String> {
 
     let target = target().ok_or("no release builds exist for this platform")?;
     let archive_name = format!("scat-{target}.tar.gz");
-    let asset_url = |name: &str| {
-        release
-            .assets
-            .iter()
-            .find(|a| a.name == name)
-            .map(|a| a.browser_download_url.clone())
-            .ok_or_else(|| format!("release {} has no asset {name}", release.tag_name))
-    };
-    let archive_url = asset_url(&archive_name)?;
-    let checksum_url = asset_url(&format!("{archive_name}.sha256"))?;
+    let base = format!(
+        "https://github.com/{}/releases/download/{}",
+        repo(),
+        release.tag
+    );
+    let archive_url = format!("{base}/{archive_name}");
+    let checksum_url = format!("{archive_url}.sha256");
 
     let dir = exe
         .parent()
@@ -114,8 +103,9 @@ fn update(check_only: bool, include_pre: bool) -> Result<(), String> {
     println!("downloading scat {latest} ({target})");
     // The archive is hashed in memory and exactly those bytes are written into the
     // private work directory for tar, so nothing can change between check and use.
-    let archive = fetch(&archive_url, None)?;
-    let checksum = String::from_utf8_lossy(&fetch(&checksum_url, None)?).into_owned();
+    let archive = fetch(&archive_url)
+        .map_err(|e| format!("{e}\nrelease {} has no build for {target}", release.tag))?;
+    let checksum = String::from_utf8_lossy(&fetch(&checksum_url)?).into_owned();
     let expected = checksum
         .split_whitespace()
         .next()
@@ -217,50 +207,51 @@ fn write_new(path: &Path, data: &[u8], mode: u32) -> std::io::Result<()> {
     file.write_all(data)
 }
 
-const PER_PAGE: usize = 100;
-const MAX_PAGES: u32 = 10;
-
-/// Collects releases page by page until a short page, at most `MAX_PAGES` pages.
-fn all_releases(
-    mut page: impl FnMut(u32) -> Result<Vec<Release>, String>,
-) -> Result<Vec<Release>, String> {
-    let mut all = Vec::new();
-    for n in 1..=MAX_PAGES {
-        let releases = page(n)?;
-        let done = releases.len() < PER_PAGE;
-        all.extend(releases);
-        if done {
-            break;
-        }
-    }
-    Ok(all)
-}
-
+/// Lists the releases from the repository's Atom feed. Unlike the REST API
+/// (60 requests per hour without a token), the feed has no rate limit. It holds the
+/// newest releases, which is all an update needs; drafts are never in it.
 fn newest_release(include_pre: bool) -> Result<(Release, Version), String> {
-    let releases = all_releases(|page| {
-        let url = format!(
-            "https://api.github.com/repos/{}/releases?per_page={PER_PAGE}&page={page}",
+    let url = format!("https://github.com/{}/releases.atom", repo());
+    let body = fetch(&url).map_err(|e| {
+        format!(
+            "{e}\ncannot list releases of github.com/{}: the repository is private or does not exist",
             repo()
-        );
-        let body = fetch(&url, Some("application/vnd.github+json")).map_err(|e| {
-            format!(
-                "{e}\ncannot list releases of github.com/{}: the repository is private or does not exist",
-                repo()
-            )
-        })?;
-        serde_json::from_slice(&body).map_err(|e| format!("unexpected response from GitHub: {e}"))
+        )
     })?;
-    newest(releases, include_pre).ok_or_else(|| "no releases found".to_string())
+    let tags = feed_tags(&String::from_utf8_lossy(&body));
+    if let Some(found) = newest(tags.clone(), include_pre) {
+        return Ok(found);
+    }
+    match newest(tags, true) {
+        Some((release, _)) => Err(format!(
+            "no stable release yet; the newest is pre-release {}. Use --pre",
+            release.tag
+        )),
+        None => Err("no releases found".to_string()),
+    }
 }
 
-fn newest(releases: Vec<Release>, include_pre: bool) -> Option<(Release, Version)> {
-    releases
-        .into_iter()
-        .filter(|r| !r.draft && (include_pre || !r.prerelease))
-        .filter_map(|r| {
-            let version = Version::parse(r.tag_name.trim_start_matches('v')).ok()?;
-            Some((r, version))
+/// The release tags in an Atom feed, from the links to `/releases/tag/TAG`.
+fn feed_tags(feed: &str) -> Vec<String> {
+    const MARK: &str = "/releases/tag/";
+    feed.match_indices(MARK)
+        .filter_map(|(i, _)| {
+            let rest = &feed[i + MARK.len()..];
+            let tag = &rest[..rest.find(['"', '<'])?];
+            Some(tag.to_string())
         })
+        .collect()
+}
+
+/// The newest release. Only tags that parse as versions count, so a tag can never
+/// carry anything into a download URL beyond semver's `[0-9A-Za-z.+-]`.
+fn newest(tags: Vec<String>, include_pre: bool) -> Option<(Release, Version)> {
+    tags.into_iter()
+        .filter_map(|tag| {
+            let version = Version::parse(tag.strip_prefix('v').unwrap_or(&tag)).ok()?;
+            Some((Release { tag }, version))
+        })
+        .filter(|(_, v)| include_pre || v.pre.is_empty())
         .max_by(|a, b| a.1.cmp(&b.1))
 }
 
@@ -274,12 +265,8 @@ fn curl() -> Command {
     cmd
 }
 
-fn fetch(url: &str, accept: Option<&str>) -> Result<Vec<u8>, String> {
-    let mut cmd = curl();
-    if let Some(accept) = accept {
-        cmd.args(["-H", &format!("Accept: {accept}")]);
-    }
-    let output = cmd
+fn fetch(url: &str) -> Result<Vec<u8>, String> {
+    let output = curl()
         .arg(url)
         .output()
         .map_err(|e| format!("cannot run curl: {e}"))?;
@@ -372,15 +359,6 @@ impl Drop for WorkDir {
 mod tests {
     use super::*;
 
-    fn release(tag: &str, prerelease: bool) -> Release {
-        Release {
-            tag_name: tag.into(),
-            prerelease,
-            draft: false,
-            assets: Vec::new(),
-        }
-    }
-
     #[test]
     fn work_dir_is_private_and_unpredictable() {
         let work = WorkDir::create(&std::env::temp_dir()).unwrap();
@@ -429,29 +407,22 @@ mod tests {
     }
 
     #[test]
-    fn releases_are_read_from_every_page() {
-        let mut asked = Vec::new();
-        let releases = all_releases(|page| {
-            asked.push(page);
-            Ok(match page {
-                1 => (0..PER_PAGE)
-                    .map(|i| release(&format!("v0.0.{i}"), false))
-                    .collect(),
-                2 => vec![release("v1.0.0", false), release("v2.0.0-rc.1", true)],
-                _ => unreachable!("stops after a short page"),
-            })
-        })
-        .unwrap();
-        assert_eq!(asked, [1, 2]);
-        let (_, stable) = newest(releases, false).unwrap();
-        assert_eq!(stable.to_string(), "1.0.0");
-
-        let mut pages = 0;
-        all_releases(|_| {
-            pages += 1;
-            Ok((0..PER_PAGE).map(|_| release("v0.1.0", false)).collect())
-        })
-        .unwrap();
-        assert_eq!(pages, MAX_PAGES);
+    fn releases_come_from_the_feed() {
+        let feed = r#"<feed>
+  <entry><link rel="alternate" type="text/html" href="https://github.com/o/r/releases/tag/v0.2.0-rc.1"/></entry>
+  <entry><link rel="alternate" type="text/html" href="https://github.com/o/r/releases/tag/v0.1.1"/></entry>
+  <entry><link rel="alternate" type="text/html" href="https://github.com/o/r/releases/tag/nightly"/></entry>
+  <entry><link rel="alternate" type="text/html" href="https://github.com/o/r/releases/tag/v0.1.0"/></entry>
+</feed>"#;
+        let tags = feed_tags(feed);
+        assert_eq!(tags, ["v0.2.0-rc.1", "v0.1.1", "nightly", "v0.1.0"]);
+        let (release, stable) = newest(tags.clone(), false).unwrap();
+        assert_eq!(
+            (release.tag.as_str(), stable.to_string().as_str()),
+            ("v0.1.1", "0.1.1")
+        );
+        let (release, _) = newest(tags, true).unwrap();
+        assert_eq!(release.tag, "v0.2.0-rc.1");
+        assert!(newest(vec!["../../evil".into()], true).is_none());
     }
 }
