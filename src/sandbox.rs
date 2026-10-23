@@ -1,19 +1,19 @@
 //! Running untrusted parsers in a separate process.
 //!
-//! PDFs and spreadsheets are untrusted input, and their parsers (hayro, calamine) can
-//! panic, loop or allocate without bound. Release builds use `panic = "abort"`, so a
-//! panic in a parser would kill scat itself. Those parsers therefore run in a child
-//! process: scat re-runs its own binary with a hidden first argument
-//! ([`PDF_FLAG`], [`SHEET_FLAG`]), and the poppler tools run the same way. Every child
-//! gets:
+//! PDFs, spreadsheets, 7z archives and SQLite databases are untrusted input, and their
+//! parsers (hayro, calamine, sevenz-rust2, SQLite) can panic, loop or allocate without
+//! bound. Release builds use `panic = "abort"`, so a panic in a parser would kill scat
+//! itself. Those parsers therefore run in a child process: scat re-runs its own binary with a hidden first
+//! argument ([`PDF_FLAG`], [`SHEET_FLAG`], [`SEVENZ_FLAG`], [`SQLITE_FLAG`]), and the
+//! poppler tools run the same way. Every child gets:
 //!
 //! - an address space limit (`RLIMIT_AS`, [`MEMORY_LIMIT`] unless set) and no core
 //!   dumps,
 //! - a CPU time limit and a wall clock timeout ([`TIMEOUT`] unless set), after which it
 //!   is killed,
 //! - a cap on how much output is read back,
-//! - `/dev/null` or the given bytes (in an anonymous memory file) as standard input,
-//!   and argv-only arguments.
+//! - `/dev/null`, an open file, or the given bytes (in an anonymous memory file) as
+//!   standard input, and argv-only arguments.
 //!
 //! A crash, timeout or error in the child becomes an error message; scat goes on.
 
@@ -28,6 +28,21 @@ pub const PDF_FLAG: &str = "--internal-pdf";
 
 /// Hidden first argument that turns scat into the spreadsheet helper process.
 pub const SHEET_FLAG: &str = "--internal-sheet";
+
+/// Hidden first argument that turns scat into the SQLite inspection helper process.
+pub const SQLITE_FLAG: &str = "--internal-sqlite";
+
+/// Hidden first argument that turns scat into the 7z listing helper process.
+pub const SEVENZ_FLAG: &str = "--internal-7z";
+
+/// In a helper: standard input as a file, for parsers that seek. The parent passes a
+/// regular file or a memory file ([`Input::File`], [`Input::Bytes`]).
+pub fn stdin_file() -> io::Result<std::fs::File> {
+    use std::os::fd::AsFd;
+    Ok(std::fs::File::from(
+        std::io::stdin().as_fd().try_clone_to_owned()?,
+    ))
+}
 
 /// Wall clock limit for one helper run.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
@@ -91,8 +106,18 @@ where
 pub struct Limits<'a> {
     pub timeout: Duration,
     pub memory: u64,
-    /// Written to the child's standard input; `None` gives it `/dev/null`.
-    pub stdin: Option<&'a [u8]>,
+    pub stdin: Input<'a>,
+}
+
+/// The child's standard input.
+#[derive(Debug, Clone, Copy)]
+pub enum Input<'a> {
+    /// `/dev/null`.
+    Null,
+    /// These bytes, in an anonymous memory file (so the child can seek).
+    Bytes(&'a [u8]),
+    /// This open file, shared with the child (its offset too).
+    File(&'a std::fs::File),
 }
 
 impl Default for Limits<'_> {
@@ -100,7 +125,7 @@ impl Default for Limits<'_> {
         Limits {
             timeout: TIMEOUT,
             memory: MEMORY_LIMIT,
-            stdin: None,
+            stdin: Input::Null,
         }
     }
 }
@@ -131,8 +156,9 @@ pub fn run_with(mut cmd: Command, limits: Limits) -> Result<Vec<u8>, RunError> {
     // The input goes through an anonymous memory file, not a pipe: scat keeps SIGPIPE
     // at its default, so writing to a child that died early would kill scat too.
     cmd.stdin(match stdin {
-        Some(data) => Stdio::from(memory_file(data).map_err(RunError::Spawn)?),
-        None => Stdio::null(),
+        Input::Bytes(data) => Stdio::from(memory_file(data).map_err(RunError::Spawn)?),
+        Input::File(file) => Stdio::from(file.try_clone().map_err(RunError::Spawn)?),
+        Input::Null => Stdio::null(),
     })
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
@@ -231,12 +257,24 @@ type Resource = libc::__rlimit_resource_t;
 #[cfg(not(target_env = "gnu"))]
 type Resource = libc::c_int;
 
+/// Lowers `resource` to `value`, or keeps the current limit when that is already lower:
+/// an unprivileged process cannot raise its hard limit, and a scat started under a
+/// tighter limit (`ulimit -v`) must still be able to run its helpers.
 fn limit(resource: Resource, value: u64) -> io::Result<()> {
-    let lim = libc::rlimit {
-        rlim_cur: value as libc::rlim_t,
-        rlim_max: value as libc::rlim_t,
+    let mut current = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
     };
-    // SAFETY: plain syscall with a valid pointer to a local struct.
+    // SAFETY: plain syscalls with valid pointers to local structs.
+    if unsafe { libc::getrlimit(resource, &mut current) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let value = (value as libc::rlim_t).min(current.rlim_max);
+    let lim = libc::rlimit {
+        rlim_cur: value,
+        rlim_max: value,
+    };
+    // SAFETY: as above.
     if unsafe { libc::setrlimit(resource, &lim) } == 0 {
         Ok(())
     } else {
@@ -265,6 +303,26 @@ mod tests {
             Err(RunError::Crashed(signal)) => assert_eq!(signal, libc::SIGABRT),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn never_raises_a_tighter_inherited_limit() {
+        // A parent under `ulimit -v` (512 MiB) still starts helpers that ask for more.
+        let mut cmd = sh("ulimit -v");
+        // SAFETY: only setrlimit between fork and exec.
+        unsafe {
+            cmd.pre_exec(|| limit(libc::RLIMIT_AS, 512 << 20));
+        }
+        // run_with's own pre_exec asks for 2 GiB after the one above lowered it.
+        let out = run_with(
+            cmd,
+            Limits {
+                memory: 2 << 30,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), format!("{}\n", 512 << 10));
     }
 
     #[test]

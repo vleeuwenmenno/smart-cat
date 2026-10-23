@@ -394,6 +394,35 @@ fn corrupt_documents_give_a_clean_error_and_scat_continues() {
 }
 
 #[test]
+fn sparse_spreadsheets_do_not_allocate_the_whole_grid() {
+    // Two cells at A1 and XFD1048576: a dense range would be 2^34 cells (hundreds of
+    // GiB). Only the shown corner is built; the rest is a note.
+    let dir = fixtures();
+    let sheet = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+<row r="1"><c r="A1"><v>1</v></c></row><row r="1048576"><c r="XFD1048576"><v>2</v></c></row></sheetData></worksheet>"#;
+    let workbook = r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>
+<sheet name="Sparse" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
+    let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>"#;
+    zip_file(
+        &dir.join("sparse.xlsx"),
+        &[
+            ("[Content_Types].xml", "<Types/>"),
+            ("_rels/.rels", ROOT_RELS),
+            ("xl/workbook.xml", workbook),
+            ("xl/_rels/workbook.xml.rels", rels),
+            ("xl/worksheets/sheet1.xml", sheet),
+        ],
+    );
+    let started = std::time::Instant::now();
+    let text = rendered(&dir, "sparse.xlsx");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert!(text.contains("more rows"), "{text}");
+    assert!(text.contains("16320 more columns"), "{text}");
+}
+
+#[test]
 fn a_spreadsheet_parser_crash_stays_in_the_helper() {
     let dir = fixtures();
     let out = run(&["-f", "--color=never", "panic.xls", "stock.xlsx"], &dir);

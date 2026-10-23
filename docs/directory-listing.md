@@ -80,7 +80,22 @@ Making a thumbnail can mean decoding a 20 MP photo or starting ffmpeg, so thumbn
 1. A thumbnail a file manager already made is used when it is fresh: scat looks in the freedesktop cache (`$XDG_CACHE_HOME/thumbnails/{large,x-large,normal,xx-large}/<md5 of the file:// URI>.png`) and checks that its `Thumb::MTime` matches the file.
 2. Otherwise scat's own cache: `$XDG_CACHE_HOME/scat/thumbnails/` (default `~/.cache/scat/thumbnails/`), one PNG of at most 256x256 per file, named by a hash of the path, size and modification time. A changed file gets a new thumbnail. Files that have none (no cover art, undecodable) are remembered as an empty file. The directory is created with mode 0700 and the files with 0600.
 
-`[list] cache = false` turns both off: thumbnails are made on every run and nothing is written. scat never deletes old entries; remove the directory to clear it.
+`[list] cache = false` turns both off: thumbnails are made on every run and nothing is written.
+
+Cache files are untrusted, even in the user's own cache directory:
+
+- scat's cache directory is used only when it is a real directory (not a symlink) owned by you with mode 0700, inside a parent that others cannot write to. Otherwise nothing is read from or written to it.
+- Every cache file is opened without following symlinks and without blocking (a FIFO in the cache cannot hang scat), and is read only when it is a regular file of at most 16 MiB. Files in scat's cache must be owned by you; freedesktop thumbnails may belong to someone else but must be regular files too.
+- New entries are written to a fresh file (`O_EXCL`, `O_NOFOLLOW`, mode 0600) and renamed into place.
+
+#### Pruning
+
+After a tiles listing, at most once a day, scat prunes its own cache:
+
+1. Entries not modified for 30 days are removed.
+2. If the rest is larger than 256 MiB, the oldest are removed until it fits.
+
+Only regular files owned by you, directly inside `$XDG_CACHE_HOME/scat/thumbnails`, are removed; symlinks, subdirectories and other files are left alone. The directory is opened once (`O_NOFOLLOW`) and every entry is looked at and removed relative to it. The time of the last prune is the modification time of `.pruned` in that directory; when it is less than a day old, the check costs one `lstat`. The freedesktop cache is never pruned by scat.
 
 ### Limits
 

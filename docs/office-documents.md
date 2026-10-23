@@ -54,9 +54,14 @@ Documents are untrusted input, so work is capped:
 | slides | 200, then `… N more slides` |
 | sheets | 100 |
 | table columns | 64, then `… N more columns` |
-| rows per sheet | `[office] max_rows` (default 200), then `… N more rows`; `0` shows all |
+| rows per sheet | `[office] max_rows` (default 200), then `… N more rows`; `0` shows all (at most 50,000) |
+| spreadsheet helper | 20 seconds, 2 GiB of address space |
 
 Text from a document is stripped of control characters and escape sequences before it reaches the markdown, so a document cannot draw on or retitle your terminal.
+
+Spreadsheets are converted in a child process, as PDFs are: scat starts its own binary with a hidden first argument (`--internal-sheet FORMAT MAX_ROWS`), passes the document on standard input, and reads the markdown back from a pipe. The child runs with an address space limit, a CPU limit, no core dumps and a wall clock timeout. calamine can panic on hostile files, and release builds abort on a panic; in the child that only ends the child, and scat prints `scat: NAME: cannot read document: the spreadsheet parser crashed` and goes on. The overhead is about 1 ms per spreadsheet.
+
+Sheets are not built as a dense grid first. For `.xlsx` the cells are streamed and only the shown corner (the rows limit by 64 columns) is kept, so a 1 KB file with cells at A1 and XFD1048576 shows one small table and notes about the rest instead of allocating hundreds of GiB. `.xls` and `.ods` files are held in memory by calamine once opened; there the helper's memory limit is the backstop.
 
 A file that cannot be read prints `scat: NAME: cannot read document: REASON` on stderr, exit status 1, and `scat` goes on with the next file. Password-protected (encrypted) Office files are not zip files and report `not a zip file`.
 

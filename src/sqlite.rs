@@ -6,6 +6,11 @@
 //! and `SELECT * FROM "name" LIMIT n` run, with the name quoted as an identifier.
 //! `query_only` and `trusted_schema=OFF` stay on, and a progress handler interrupts any
 //! query that runs too long.
+//!
+//! The progress handler only runs between virtual machine steps, and one step (a GLOB
+//! over megabytes, say) can take many seconds. So the whole inspection runs in a
+//! sandboxed helper (`scat --internal-sqlite`, see [`crate::sandbox`]) that is killed
+//! after [`HELPER_TIMEOUT`] and has a memory limit.
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -27,7 +32,9 @@ const MAGIC: &[u8; 16] = b"SQLite format 3\0";
 /// One query (row count, sample) may run this long.
 const QUERY_BUDGET: Duration = Duration::from_secs(2);
 /// All queries of one file together may run this long.
-const TOTAL_BUDGET: Duration = Duration::from_secs(10);
+const TOTAL_BUDGET: Duration = Duration::from_secs(8);
+/// Wall clock limit for the helper: the query budget plus time to start and print.
+pub const HELPER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Virtual machine steps between two looks at the clock.
 const PROGRESS_STEPS: i32 = 1000;
 /// Names in the overview list before `… N more`.
@@ -185,19 +192,109 @@ fn cannot_read(err: impl std::fmt::Display) -> io::Error {
     io::Error::other(format!("cannot read database: {err}"))
 }
 
+/// Renders the database view by running [`render_file`] in the sandboxed helper.
 pub fn render<W: Write>(
     out: &mut W,
     source: &Source,
     input: &mut Input,
     opts: &Options,
 ) -> io::Result<()> {
+    use crate::sandbox;
     let Source::Path(path) = source else {
         return Err(cannot_read("standard input is not a file"));
     };
-    let file_size = match input.kind {
-        InputKind::Regular { size } => size,
-        _ => return Err(cannot_read("not a regular file")),
+    if !matches!(input.kind, InputKind::Regular { .. }) {
+        return Err(cannot_read("not a regular file"));
+    }
+    let flag = |b: bool| if b { "1" } else { "0" };
+    let mut cmd = sandbox::helper(sandbox::SQLITE_FLAG, [opts.name]);
+    cmd.args([
+        flag(opts.colors),
+        flag(opts.utf8),
+        &opts.width.to_string(),
+        &opts.sample_rows.to_string(),
+        &opts.max_tables.to_string(),
+    ]);
+    cmd.arg(path);
+    let rendered = sandbox::run_with(
+        cmd,
+        sandbox::Limits {
+            timeout: HELPER_TIMEOUT,
+            ..sandbox::Limits::default()
+        },
+    )
+    .map_err(|err| match err {
+        // The helper's own message already starts with "cannot read database".
+        sandbox::RunError::Failed(message) if message.starts_with("cannot read database") => {
+            io::Error::other(message)
+        }
+        other => cannot_read(other),
+    })?;
+    out.write_all(&rendered)
+}
+
+/// Runs the database helper when scat was started as one (`scat --internal-sqlite NAME
+/// COLORS UTF8 WIDTH SAMPLE_ROWS MAX_TABLES PATH`); `None` for a normal run.
+pub fn internal_main() -> Option<i32> {
+    let mut args = std::env::args_os().skip(1);
+    if args.next()? != crate::sandbox::SQLITE_FLAG {
+        return None;
+    }
+    crate::sandbox::report_panics("database reader");
+    let args: Vec<std::ffi::OsString> = args.collect();
+    let text = |i: usize| args.get(i).and_then(|a| a.to_str());
+    let number = |i: usize| text(i).and_then(|t| t.parse::<usize>().ok());
+    let (
+        Some(name),
+        Some(colors),
+        Some(utf8),
+        Some(width),
+        Some(sample_rows),
+        Some(max_tables),
+        Some(path),
+    ) = (
+        text(0),
+        text(1),
+        text(2),
+        number(3),
+        number(4),
+        number(5),
+        args.get(6),
+    )
+    else {
+        eprintln!("scat: usage error");
+        return Some(2);
     };
+    let opts = Options {
+        name,
+        colors: colors == "1",
+        utf8: utf8 == "1",
+        width,
+        sample_rows,
+        max_tables,
+    };
+    let mut buf = Vec::new();
+    match render_file(&mut buf, Path::new(path), &opts) {
+        Ok(()) => {
+            let mut stdout = io::stdout().lock();
+            Some(
+                if stdout.write_all(&buf).and_then(|()| stdout.flush()).is_ok() {
+                    0
+                } else {
+                    1
+                },
+            )
+        }
+        Err(err) => {
+            eprintln!("scat: {}", crate::util::io_message(&err));
+            Some(2)
+        }
+    }
+}
+
+/// The database view of the file at `path`. Runs in the helper only.
+fn render_file<W: Write>(out: &mut W, path: &Path, opts: &Options) -> io::Result<()> {
+    let file_size = std::fs::metadata(path)?.len();
     let mut raw = [0u8; 100];
     let read = std::fs::File::open(path).and_then(|mut f| {
         use std::io::Read;

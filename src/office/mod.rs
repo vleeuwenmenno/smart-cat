@@ -198,7 +198,7 @@ fn convert_sheet(format: Format, data: &[u8], limits: &Limits) -> Result<Convert
         sandbox::Limits {
             timeout: SHEET_TIMEOUT,
             memory: SHEET_MEMORY,
-            stdin: Some(data),
+            stdin: sandbox::Input::Bytes(data),
         },
     )
     .map_err(|err| err.to_string())?;
