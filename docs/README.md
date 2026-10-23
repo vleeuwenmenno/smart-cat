@@ -4,6 +4,7 @@
 |---|---|
 | [cat-compatibility.md](cat-compatibility.md) | flags, stdin, exit codes, when scat behaves exactly like cat |
 | [rendering.md](rendering.md) | what happens when output is a terminal: text, binary files, escape sequences |
+| [paging.md](paging.md) | long output through `less`, file headers for several files |
 | [audio.md](audio.md) | audio files: tag table, waveform, `--play` with mpv |
 | [markdown.md](markdown.md) | rendered markdown: wrapping, tables, code blocks, links and OSC 8, seeing the source |
 | [syntax-highlighting.md](syntax-highlighting.md) | language detection, themes, colour depth |

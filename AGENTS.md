@@ -34,6 +34,10 @@ Run `make check` before handing work back.
 | `src/highlight.rs` | syntect + two-face (bat's syntaxes and themes), colour reduction |
 | `src/audio.rs` + `src/waveform.rs` | audio info view (lofty tags, symphonia peaks, braille/ASCII waveform) |
 | `src/play.rs` | `--play`: hands audio and video to mpv |
+| `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |
+| `src/header.rs` | file name rule printed before each file when several are rendered |
+| `src/hexdump.rs` | hex dump view for binary files |
+| `src/generate.rs` | `--completions` and `--man` (clap_complete, clap_mangen) |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
 | `src/config.rs` + `src/config_template.toml` | TOML config, rules, `--init-config` |

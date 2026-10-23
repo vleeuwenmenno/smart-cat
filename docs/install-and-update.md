@@ -52,6 +52,19 @@ make install        # builds and installs to ~/.local/bin/scat
 | `no stable release yet; the newest is pre-release vX` | only pre-releases exist | add `--pre` |
 | `no release asset at ...` | the release has no build for your CPU, or the tag does not exist | check the tag, or install from source |
 
+## Completions and man page
+
+scat prints both itself, so they always match the flags of the installed version:
+
+```sh
+scat --completions fish > ~/.config/fish/completions/scat.fish
+scat --completions bash > ~/.local/share/bash-completion/completions/scat
+scat --completions zsh > ~/.zfunc/_scat      # a directory on your fpath
+scat --man > ~/.local/share/man/man1/scat.1
+```
+
+`--completions` also knows `elvish` and `powershell`. The release archives (x86_64 and aarch64) carry the same files as `completions/scat.{bash,fish,zsh}` and `scat.1`. `install.sh` copies them only into user directories that already exist (`~/.config/fish/completions`, `~/.local/share/bash-completion/completions`, `~/.local/share/man/man1`); it never creates them. Zsh needs you to pick a directory on `fpath`, so the script leaves it alone.
+
 ## Updating
 
 ```sh

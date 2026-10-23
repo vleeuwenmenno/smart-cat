@@ -4,12 +4,16 @@ mod cli;
 mod config;
 mod detect;
 mod diagnose;
+mod generate;
+mod header;
+mod hexdump;
 mod highlight;
 mod image;
 mod input;
 mod kv;
 mod listing;
 mod markdown;
+mod pager;
 mod play;
 mod render;
 mod term;
@@ -35,6 +39,12 @@ fn main() {
 }
 
 fn run(cli: &Cli) -> i32 {
+    if let Some(shell) = cli.completions {
+        return generate::completions(shell);
+    }
+    if cli.man {
+        return generate::man();
+    }
     let loaded = config::load(cli.config.as_deref(), cli.no_config);
     for warning in &loaded.warnings {
         eprintln!("scat: {warning}");

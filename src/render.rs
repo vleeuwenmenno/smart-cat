@@ -7,14 +7,17 @@ use syntect::easy::HighlightLines;
 use crate::audio;
 use crate::cat::{self, CatOptions, CatState};
 use crate::cli::Cli;
-use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, Renderer};
+use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, PagingMode, Renderer};
 use crate::detect::{self, Kind, SNIFF_BYTES};
+use crate::header;
+use crate::hexdump;
 use crate::highlight::{self, Assets};
 use crate::input::{self, Input, InputKind, Source};
 use crate::listing;
 use crate::markdown;
+use crate::pager;
 use crate::term::{self, ColorDepth, query};
-use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
+use crate::util::{TrackedWriter, io_message, read_line_capped};
 use crate::video;
 
 /// Lines longer than this are shown unhighlighted from that point on.
@@ -28,9 +31,6 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
     let out_identity = input::stdout_identity();
 
     let mut ctx = Context::new(cli, config, stdout_tty);
-    let mut out = TrackedWriter::new(BufWriter::with_capacity(64 * 1024, stdout.lock()));
-    let mut cat_state = CatState::default();
-    let mut status = 0;
 
     let mut sources = Source::from_args(&cli.files);
     if cli.files.is_empty()
@@ -45,18 +45,55 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
             .filter(|s| matches!(s, Source::Path(p) if p.is_dir()))
             .count();
     }
+    ctx.show_headers =
+        render && stdout_tty && sources.len() > 1 && !cli.plain && config.defaults.headers;
 
+    // Decide on paging up front: only when every file is text-like (no graphics, no media).
+    let mode = cli.paging.unwrap_or(config.defaults.paging);
+    let decision = pager::decide(
+        mode,
+        stdout_tty,
+        render,
+        mode != PagingMode::Never && stdout_tty && render && all_pageable(&sources, &ctx),
+    );
+    let mut output = pager::Output::new(stdout.lock(), pager::plan(decision));
+    let paged = output.is_paged();
+    let status = {
+        let mut out = TrackedWriter::new(BufWriter::with_capacity(64 * 1024, &mut output));
+        process_all(&sources, render, out_identity, paged, &mut ctx, &mut out)
+    };
+    match output.finish() {
+        Err(err) if paged && err.kind() == io::ErrorKind::BrokenPipe => status,
+        Err(err) => {
+            eprintln!("scat: write error: {}", io_message(&err));
+            1
+        }
+        Ok(()) => status,
+    }
+}
+
+/// Whether an error is the pager having quit early: stop quietly, not a failure.
+fn pager_quit(paged: bool, err: &io::Error) -> bool {
+    paged && err.kind() == io::ErrorKind::BrokenPipe
+}
+
+fn process_all<W: Write>(
+    sources: &[Source],
+    render: bool,
+    out_identity: Option<(u64, u64)>,
+    paged: bool,
+    ctx: &mut Context,
+    out: &mut TrackedWriter<W>,
+) -> i32 {
+    let mut cat_state = CatState::default();
+    let mut status = 0;
     for source in sources {
-        let result = process(
-            &source,
-            render,
-            out_identity,
-            &mut ctx,
-            &mut out,
-            &mut cat_state,
-        );
+        let result = process(source, render, out_identity, ctx, out, &mut cat_state);
         if let Err(err) = result {
             if out.failed {
+                if pager_quit(paged, &err) {
+                    return 0;
+                }
                 eprintln!("scat: write error: {}", io_message(&err));
                 return 1;
             }
@@ -65,11 +102,67 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
             status = 1;
         }
     }
-    if let Err(err) = cat::finish(&mut out, &mut cat_state).and_then(|()| out.flush()) {
+    if let Err(err) = cat::finish(out, &mut cat_state).and_then(|()| out.flush()) {
+        if pager_quit(paged, &err) {
+            return 0;
+        }
         eprintln!("scat: write error: {}", io_message(&err));
         return 1;
     }
     status
+}
+
+/// True when every source is a file or directory that renders as plain text (or a hex
+/// dump), so a pager can show it. Standard input cannot be sniffed ahead of time.
+fn all_pageable(sources: &[Source], ctx: &Context) -> bool {
+    sources.iter().all(|source| source_pageable(source, ctx))
+}
+
+fn source_pageable(source: &Source, ctx: &Context) -> bool {
+    let Source::Path(path) = source else {
+        return false;
+    };
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if meta.is_dir() {
+        return ctx.config.defaults.directories == Directories::List;
+    }
+    if !meta.is_file() {
+        return false;
+    }
+    let mut head = Vec::new();
+    let sniffed = std::fs::File::open(path)
+        .and_then(|file| file.take(SNIFF_BYTES as u64).read_to_end(&mut head));
+    if sniffed.is_err() {
+        return false;
+    }
+    let detected = detect::detect(&head);
+    let file_name = source.file_name();
+    let settings = ctx
+        .config
+        .settings_for(file_name.as_deref(), &detected.mime);
+    pager::renderer_is_pageable(
+        settings.renderer,
+        &detected.kind,
+        &detected.mime,
+        crate::image::wants(&detected.mime, file_name.as_deref(), &head),
+        is_audio(&detected, file_name.as_deref()),
+    )
+}
+
+/// The rule before a file when several are rendered, with a blank line between files.
+fn write_header<W: Write>(source: &Source, ctx: &mut Context, out: &mut W) -> io::Result<()> {
+    if ctx.printed > 0 {
+        out.write_all(b"\n")?;
+    }
+    ctx.printed += 1;
+    let name = match source {
+        Source::Stdin => "-".to_string(),
+        Source::Path(path) => path.to_string_lossy().into_owned(),
+    };
+    let width = listing::terminal_width();
+    out.write_all(header::line(&name, width, ctx.colors, ctx.utf8).as_bytes())
 }
 
 fn process<W: Write>(
@@ -94,6 +187,9 @@ fn process<W: Write>(
 
     if !render || input.kind == InputKind::Device {
         return write_cat(&mut input, out, &ctx.cat_options, cat_state);
+    }
+    if ctx.show_headers {
+        write_header(source, ctx, out)?;
     }
 
     let head = input.reader.fill_buf()?;
@@ -136,24 +232,27 @@ fn process<W: Write>(
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
         }
-        Renderer::Auto if detected.kind == Kind::Binary => {
-            out.flush()?;
-            let size = match input.kind {
-                InputKind::Regular { size } => format!(", {}", human_size(size)),
-                _ => String::new(),
-            };
-            eprintln!(
-                "scat: {}: binary file ({}{size}) not shown; use --raw to print it",
-                source.display_name(),
-                detected.mime
-            );
-            Ok(())
-        }
+        Renderer::Hex => render_hex(&mut input, out, ctx),
+        Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
         _ if as_markdown => {
             render_markdown(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
         }
         _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
     }
+}
+
+/// Hex dump of the first `[hexdump] max_bytes` bytes.
+fn render_hex<W: Write>(input: &mut Input, out: &mut W, ctx: &Context) -> io::Result<()> {
+    let total = match input.kind {
+        InputKind::Regular { size } => Some(size),
+        _ => None,
+    };
+    let opts = hexdump::Options {
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        max_bytes: ctx.config.hexdump.max_bytes.max(16),
+    };
+    hexdump::render(out, &mut input.reader, total, &opts)
 }
 
 /// Video info view. ffprobe opens the file by path, so standard input and pipes only
@@ -203,6 +302,7 @@ fn list_directory<W: Write>(
         writeln!(out, "{}:", listing::safe_name(&path.to_string_lossy()))?;
     }
     ctx.listed += 1;
+    ctx.printed += 1;
     out.write_all(&buf)
 }
 
@@ -310,6 +410,10 @@ struct Context<'a> {
     /// Directory arguments being listed, and how many are done: headers for several.
     dir_args: usize,
     listed: usize,
+    /// Print a rule with the file name before each file (several files, terminal).
+    show_headers: bool,
+    /// Files and listings printed so far, for the blank line between headed files.
+    printed: usize,
 }
 
 impl<'a> Context<'a> {
@@ -329,6 +433,8 @@ impl<'a> Context<'a> {
             warned_theme: false,
             dir_args: 0,
             listed: 0,
+            show_headers: false,
+            printed: 0,
         }
     }
 

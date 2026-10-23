@@ -36,12 +36,25 @@ no_args = "list"
 # A directory argument is listed when rendering. Set "error" for cat's "Is a directory".
 directories = "list"
 
+# Long text output goes through a pager when it does not fit the screen: "auto",
+# "always" or "never". The pager is $SCAT_PAGER, then $PAGER, then `less -RFX`.
+# Never used for images, media, or when output is piped. `scat --paging never` for one run.
+paging = "auto"
+
+# Show a rule with the file name before each file when you print several at once.
+# `scat -p` hides it for one run.
+headers = true
+
 [list]
 # "grid" (like ls) or "long" (one entry per line with size and age).
 style = "grid"
 
 # Show names starting with a dot. `scat --all` does this for one run.
 show_hidden = false
+
+[hexdump]
+# Binary files show a hex dump of this many leading bytes.
+max_bytes = 512
 
 [image]
 # How images are drawn: "auto" (best the terminal supports), "kitty", "sixel",
@@ -64,7 +77,7 @@ channel = "stable"
 #
 # renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
-#   "video" (info view), "raw" (exactly cat)
+#   "video" (info view), "hex" (hex dump), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

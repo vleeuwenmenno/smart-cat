@@ -35,6 +35,21 @@ usage() {
     say "  --dir DIR      install into DIR (default: \$SCAT_INSTALL_DIR or ~/.local/bin)"
 }
 
+# Copies a regular file into DIR when DIR already exists (never creates directories).
+put() {
+    [ -f "$1" ] && [ ! -L "$1" ] && [ -d "$2" ] || return 0
+    cp "$1" "$2/$3" && say "installed $2/$3"
+}
+
+# Shell completions and the man page, only into user directories that already exist.
+install_extras() {
+    CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+    DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+    put "$TMP/completions/scat.fish" "$CONFIG_HOME/fish/completions" scat.fish
+    put "$TMP/completions/scat.bash" "$DATA_HOME/bash-completion/completions" scat
+    put "$TMP/scat.1" "$DATA_HOME/man/man1" scat.1
+}
+
 # The whole script is a function called on the last line, so a download cut short
 # by `curl | sh` never runs half of it.
 main() {
@@ -138,6 +153,8 @@ main() {
     [ "$EXPECTED" = "$ACTUAL" ] || die "checksum mismatch: expected $EXPECTED, got $ACTUAL"
 
     tar -xzf "$TMP/$ASSET" -C "$TMP" scat
+    # Completions and the man page are optional: older archives do not have them.
+    tar -xzf "$TMP/$ASSET" -C "$TMP" completions scat.1 2>/dev/null || true
     if [ ! -f "$TMP/scat" ] || [ -L "$TMP/scat" ]; then
         die "the archive has no regular scat binary"
     fi
@@ -154,6 +171,8 @@ main() {
     STAGED=""
 
     say "installed $NEW_VERSION to $INSTALL_DIR/scat"
+
+    install_extras
 
     case ":$PATH:" in
         *":$INSTALL_DIR:"*) ;;
