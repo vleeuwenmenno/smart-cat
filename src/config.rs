@@ -36,6 +36,8 @@ pub enum Renderer {
     Markdown,
     /// Decode and draw as an image (kitty, sixel or text blocks).
     Image,
+    /// Box-drawn table for CSV, TSV and PSV files.
+    Table,
 }
 
 impl fmt::Display for Renderer {
@@ -49,6 +51,7 @@ impl fmt::Display for Renderer {
             Renderer::Audio => "audio",
             Renderer::Markdown => "markdown",
             Renderer::Image => "image",
+            Renderer::Table => "table",
         })
     }
 }
@@ -143,6 +146,20 @@ pub struct Config {
     pub update: UpdateConfig,
     pub list: ListConfig,
     pub image: ImageConfig,
+    pub table: TableConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TableConfig {
+    /// Data rows shown for CSV/TSV files; 0 shows all of them.
+    pub max_rows: usize,
+}
+
+impl Default for TableConfig {
+    fn default() -> Self {
+        Self { max_rows: 200 }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

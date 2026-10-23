@@ -24,6 +24,7 @@ scat song.flac              # audio tags and waveform; --play plays it with mpv
 scat -p main.rs             # plain: no line numbers
 scat README.md              # rendered markdown, wrapped to the terminal
 scat                        # alone in a terminal: list the directory
+scat data.csv               # a table fitted to the terminal; minified JSON is pretty-printed
 scat clip.mp4               # video info (needs ffprobe)
 scat photo.png              # the image itself (kitty, sixel or Unicode blocks)
 scat file.txt | grep foo    # piped: identical to cat

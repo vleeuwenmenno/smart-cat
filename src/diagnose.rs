@@ -243,6 +243,15 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
         {
             "markdown (auto)".to_string()
         }
+        (Renderer::Auto, Kind::Text)
+            if crate::table::delimiter_for(
+                file_name.as_deref(),
+                cli.language.as_deref().or(settings.language.as_deref()),
+            )
+            .is_some() =>
+        {
+            "table (auto)".to_string()
+        }
         (Renderer::Auto, Kind::Text) => "code (auto)".to_string(),
         (other, _) => other.to_string(),
     };
@@ -250,7 +259,7 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
     if detected.kind == Kind::Text
         && !matches!(
             settings.renderer,
-            Renderer::Raw | Renderer::Audio | Renderer::Image
+            Renderer::Raw | Renderer::Audio | Renderer::Image | Renderer::Table
         )
         && !(settings.renderer == Renderer::Auto && is_image)
     {

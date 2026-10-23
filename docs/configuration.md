@@ -48,6 +48,12 @@ See [directory-listing.md](directory-listing.md).
 | `max_height` | unset | maximum image height in rows; unset means the terminal height minus 4 (at least 10) |
 | `animate` | `true` | play animated GIF/WebP/PNG once; `false` shows the first frame |
 
+## `[table]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_rows` | `200` | data rows shown for CSV/TSV/PSV files before the "more rows" footer; `0` shows all; see [data-files.md](data-files.md) |
+
 ## `[update]`
 
 | Key | Default | Meaning |
@@ -88,7 +94,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"raw"` (exactly cat) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"raw"` (exactly cat) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |

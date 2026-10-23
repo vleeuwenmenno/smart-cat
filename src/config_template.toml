@@ -54,6 +54,11 @@ protocol = "auto"
 # Play animated GIF, WebP and PNG once (false shows the first frame only).
 animate = true
 
+[table]
+# CSV, TSV and PSV files are drawn as tables. Data rows shown before a "... more rows"
+# footer; 0 shows every row.
+max_rows = 200
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -64,7 +69,7 @@ channel = "stable"
 #
 # renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
-#   "video" (info view), "raw" (exactly cat)
+#   "video" (info view), "table" (CSV/TSV table), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

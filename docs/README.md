@@ -6,6 +6,7 @@
 | [rendering.md](rendering.md) | what happens when output is a terminal: text, binary files, escape sequences |
 | [audio.md](audio.md) | audio files: tag table, waveform, `--play` with mpv |
 | [markdown.md](markdown.md) | rendered markdown: wrapping, tables, code blocks, links and OSC 8, seeing the source |
+| [data-files.md](data-files.md) | CSV/TSV tables, minified JSON pretty-printing, what YAML/TOML do |
 | [syntax-highlighting.md](syntax-highlighting.md) | language detection, themes, colour depth |
 | [video.md](video.md) | video info view: streams, duration, ffprobe dependency |
 | [images.md](images.md) | images in the terminal: kitty, sixel, block and ASCII output, sizing, animation, SVG |

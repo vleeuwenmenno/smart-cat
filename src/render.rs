@@ -11,8 +11,10 @@ use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, Rend
 use crate::detect::{self, Kind, SNIFF_BYTES};
 use crate::highlight::{self, Assets};
 use crate::input::{self, Input, InputKind, Source};
+use crate::json;
 use crate::listing;
 use crate::markdown;
+use crate::table;
 use crate::term::{self, ColorDepth, query};
 use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
 use crate::video;
@@ -112,6 +114,14 @@ fn process<W: Write>(
         _ => false,
     };
 
+    let delimited = table::delimiter_for(file_name.as_deref(), language);
+    if matches!(settings.renderer, Renderer::Auto | Renderer::Code)
+        && detected.kind == Kind::Text
+        && json::is_json(file_name.as_deref(), language)
+    {
+        json::prettify_input(&mut input, &head)?;
+    }
+
     match settings.renderer {
         Renderer::Video => render_video(source, &input, out, ctx, &detected.mime),
         Renderer::Auto if is_video => render_video(source, &input, out, ctx, &detected.mime),
@@ -136,6 +146,22 @@ fn process<W: Write>(
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
         }
+        Renderer::Table => render_table(
+            &mut input,
+            out,
+            ctx,
+            &settings,
+            &head,
+            delimited.unwrap_or(table::Delimiter::Sniff),
+        ),
+        Renderer::Auto if detected.kind == Kind::Text && delimited.is_some() => render_table(
+            &mut input,
+            out,
+            ctx,
+            &settings,
+            &head,
+            delimited.unwrap_or(table::Delimiter::Sniff),
+        ),
         Renderer::Auto if detected.kind == Kind::Binary => {
             out.flush()?;
             let size = match input.kind {
@@ -175,6 +201,25 @@ fn render_video<W: Write>(
     };
     let name = source.file_name().unwrap_or_else(|| source.display_name());
     video::render(out, path, &name, Some(size), mime, ctx.colors)
+}
+
+fn render_table<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    settings: &FileSettings,
+    head: &[u8],
+    delimiter: table::Delimiter,
+) -> io::Result<()> {
+    let cli = ctx.cli;
+    let opts = table::Options {
+        width: listing::terminal_width(),
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        line_numbers: !cli.plain && (cli.number || cli.number_nonblank || settings.line_numbers),
+        max_rows: ctx.config.table.max_rows,
+    };
+    table::render(&mut input.reader, head, delimiter, &opts, out)
 }
 
 fn list_directory<W: Write>(
