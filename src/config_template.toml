@@ -50,15 +50,40 @@ paging = "auto"
 headers = true
 
 [list]
-# "grid" (like ls) or "long" (one entry per line with size and age).
-style = "grid"
+# "auto" (tiles when the terminal can draw images, else the grid), "tiles"
+# (thumbnails and icons with the name under each), "grid" (like ls) or "long"
+# (one entry per line with size and age). `scat --style NAME` for one run.
+style = "auto"
 
 # Show names starting with a dot. `scat --all` does this for one run.
 show_hidden = false
 
+# Thumbnail box of a tile in terminal cells; the name goes on the line below.
+# `scat --tile-size 20x10` for one run.
+tile_width = 16
+tile_height = 8
+
+# Thumbnails of images, videos (ffmpeg), PDFs and audio cover art in the tiles view.
+# `scat --no-thumbnails` for one run.
+thumbnails = true
+
+# Icons for entries without a thumbnail: "unicode" (a folder or a badge with the
+# extension), "nerd" (Nerd Font glyphs; needs a patched font) or "none".
+icons = "unicode"
+
+# Most thumbnails per listing; the rest get icons.
+max_thumbnails = 200
+
+# Keep generated thumbnails in $XDG_CACHE_HOME/scat/thumbnails.
+cache = true
+
 [hexdump]
 # Binary files show a hex dump of this many leading bytes.
 max_bytes = 512
+
+[binary]
+# Executables and libraries show a summary, then a hex dump of this many bytes.
+hex_bytes = 256
 
 [image]
 # How images are drawn: "auto" (best the terminal supports), "kitty", "sixel",
@@ -83,6 +108,30 @@ pages = "1"
 # Most pages drawn as images per file (text output is not limited).
 max_pages = 20
 
+[archive]
+# Archives (zip, tar, tarballs, deb, 7z) show a summary and a file tree. Entries shown
+# before a "... more entries" footer; 0 shows every entry.
+max_entries = 500
+
+[office]
+# Word, PowerPoint, Excel and OpenDocument files are shown as markdown. Data rows shown
+# per spreadsheet sheet before a "... more rows" note; 0 shows every row.
+max_rows = 200
+
+[cat_mode]
+# Started under the name `cat` (a `cat -> scat` symlink), scat behaves exactly like
+# GNU cat: no rendering, paging, directory listing or terminal query, and messages say
+# `cat:`. Set true to render on a terminal as `scat` does (messages still say `cat:`).
+render = false
+
+[sqlite]
+# SQLite databases show their tables, then the first of them in detail.
+# Rows shown per table (0 shows the schema only).
+sample_rows = 10
+
+# Tables shown in detail after the overview (0 shows the overview only).
+max_tables = 20
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -94,8 +143,11 @@ channel = "stable"
 # renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
 #   "video" (info view), "table" (CSV/TSV table), "diff" (coloured diff),
-#   "log" (coloured log levels), "hex" (hex dump), "pdf" (info and pages),
-#   "raw" (exactly cat)
+#   "log" (coloured log levels), "hex" (hex dump), "binary" (executable summary), "pdf" (info and pages),
+#   "archive" (summary and file tree),
+#   "document" (docx, pptx, xlsx, odt, ... as markdown),
+#   "cert" (certificate and key summaries; private keys hidden),
+#   "database" (SQLite tables and rows), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

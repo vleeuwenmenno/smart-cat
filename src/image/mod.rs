@@ -52,7 +52,7 @@ impl Method {
         }
     }
 
-    fn is_pixel(self) -> bool {
+    pub fn is_pixel(self) -> bool {
         matches!(self, Method::Kitty | Method::Sixel)
     }
 }
@@ -131,14 +131,18 @@ impl Screen {
     fn layout(&self, width: u32, height: u32, max_cols: u16, max_rows: u16) -> Layout {
         if self.method.is_pixel() {
             let fit = size::fit_pixels(width, height, max_cols, max_rows, self.cell, false);
-            let mut px_h = fit.height;
+            let (mut px_h, mut rows) = (fit.height, fit.rows);
             if self.method == Method::Sixel {
-                // Whole sixel bands only, so the image ends exactly where we expect.
+                // Whole sixel bands only, so the image ends exactly where we expect. A
+                // sixel terminal advances one text row per started cell of pixels, so
+                // the rows follow the rounded height (rounding down may save a row).
                 px_h = (px_h / 6 * 6).max(6);
+                let cell_h = u32::from(self.cell.1.max(1));
+                rows = (px_h.div_ceil(cell_h) as u16).clamp(1, rows);
             }
             return Layout {
                 cols: fit.cols,
-                rows: fit.rows,
+                rows,
                 px: (fit.width, px_h),
                 pin_rows: false,
             };
@@ -367,6 +371,28 @@ pub fn draw_encoded(
         _ => decoded.first_frame()?,
     };
     draw(screen, &img, opts).map_err(|e| e.to_string())
+}
+
+/// Decodes an encoded image (raster, or SVG when `svg`) with the same limits as the
+/// image view and scales it down to fit `max_side` pixels. Animations give their first
+/// frame; SVGs are rendered at that size. For directory thumbnails.
+pub fn thumbnail(data: Vec<u8>, svg: bool, max_side: u32) -> Result<RgbaImage, String> {
+    if data.len() as u64 > MAX_FILE_BYTES {
+        return Err("image too large".into());
+    }
+    let max_side = max_side.max(1);
+    let decoded = decode::Decoded::open(data, svg)?;
+    if let decode::Decoded::Svg { .. } = decoded {
+        let (w, h) = decoded.size();
+        let scale = f64::from(max_side) / f64::from(w.max(h).max(1));
+        let fit = |v: u32| ((f64::from(v) * scale).round() as u32).clamp(1, max_side);
+        return decoded.render_svg(fit(w), fit(h));
+    }
+    let img = decoded.first_frame()?;
+    if img.width() <= max_side && img.height() <= max_side {
+        return Ok(img.to_rgba8());
+    }
+    Ok(img.thumbnail(max_side, max_side).to_rgba8())
 }
 
 /// SVGs may be drawn up to this many times their intrinsic size.
@@ -728,6 +754,44 @@ mod tests {
             out,
             b"\n\n\n\n\x1b[4A\x1b7<img>\x1b8\x1b[6Ca\n\x1b[6Cb\n\n".to_vec()
         );
+    }
+
+    /// Cells a sixel image of `px` pixels covers in foot, measured with cursor position
+    /// reports: one column per started cell width, one row per started cell height.
+    fn sixel_cells(px: (u32, u32), cell: (u16, u16)) -> (u16, u16) {
+        (
+            px.0.div_ceil(u32::from(cell.0)) as u16,
+            px.1.div_ceil(u32::from(cell.1)) as u16,
+        )
+    }
+
+    #[test]
+    fn sixel_covers_exactly_the_planned_cells() {
+        // foot at scale 1 (9x20) and 1.25 (11x25), and the 18x39 it reports while a new
+        // window has not settled on its scale; plus a few odd cell sizes.
+        for cell in [(9, 20), (11, 25), (18, 39), (10, 20), (7, 15), (8, 17)] {
+            let mut s = screen(Method::Sixel, true, true);
+            s.cell = cell;
+            for (w, h) in [
+                (2000, 1200),
+                (180, 390),
+                (64, 200),
+                (1, 1),
+                (333, 121),
+                (50, 7),
+            ] {
+                for (max_cols, max_rows) in [(108, 34), (20, 10), (3, 2), (200, 60)] {
+                    let layout = s.layout(w, h, max_cols, max_rows);
+                    assert_eq!(layout.px.1 % 6, 0, "{cell:?} {w}x{h}");
+                    assert_eq!(
+                        sixel_cells(layout.px, cell),
+                        (layout.cols, layout.rows),
+                        "cell {cell:?}, image {w}x{h}, box {max_cols}x{max_rows}: {layout:?}"
+                    );
+                    assert!(layout.cols <= max_cols && layout.rows <= max_rows);
+                }
+            }
+        }
     }
 
     #[test]

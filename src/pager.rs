@@ -31,15 +31,81 @@ pub enum Decision {
     Always,
 }
 
+/// What the paging decision needs to know about how scat was started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Terminal {
+    pub stdout_tty: bool,
+    pub stdin_tty: bool,
+    /// scat's process group is the terminal's foreground group (not `scat f &`).
+    pub foreground: bool,
+    /// scat leads its own process group. A job-control (interactive) shell puts every
+    /// job it starts in a new process group; a script, `make`, `xargs` or `find -exec`
+    /// starts commands inside its own group, so there this is false.
+    pub job_leader: bool,
+}
+
+impl Terminal {
+    /// Looks at the real process. The terminal calls are only made when stdout is one.
+    pub fn detect() -> Self {
+        use std::io::IsTerminal;
+        let stdout = io::stdout();
+        let stdout_tty = stdout.is_terminal();
+        if !stdout_tty {
+            return Self::default();
+        }
+        let pgrp = rustix::process::getpgrp();
+        Self {
+            stdout_tty,
+            stdin_tty: io::stdin().is_terminal(),
+            foreground: crate::term::in_foreground(&stdout),
+            job_leader: pgrp == rustix::process::getpid(),
+        }
+    }
+
+    /// Why `auto` paging is off for this terminal, or `None` when it would page.
+    pub fn auto_blocker(&self) -> Option<&'static str> {
+        if !self.stdout_tty {
+            Some("standard output is not a terminal")
+        } else if !self.foreground {
+            Some("not in the terminal's foreground (background job)")
+        } else if !self.stdin_tty {
+            Some("standard input is not a terminal")
+        } else if !self.job_leader {
+            Some("started by a script or program, not directly by a shell")
+        } else {
+            None
+        }
+    }
+}
+
 /// Whether to page. `all_pageable` says every file is text-like (no graphics, no
-/// playback); `stdout_tty` and `render` come from the run itself.
-pub fn decide(mode: PagingMode, stdout_tty: bool, render: bool, all_pageable: bool) -> Decision {
-    if mode == PagingMode::Never || !stdout_tty || !render || !all_pageable {
+/// playback); it is only called when everything else allows paging, since it sniffs
+/// every file.
+///
+/// `auto` pages only for a person at the prompt: stdin and stdout are the terminal,
+/// scat is in the foreground and leads its own process group (see [`Terminal`]). So
+/// `cat bigfile` inside a script run from a terminal prints, like cat, instead of
+/// waiting in `less`. `always` is an explicit request and only needs stdout to be the
+/// terminal and scat to be in the foreground (less reads keys from /dev/tty, and a
+/// background pager would just be stopped).
+pub fn decide(
+    mode: PagingMode,
+    terminal: &Terminal,
+    render: bool,
+    all_pageable: impl FnOnce() -> bool,
+) -> Decision {
+    if mode == PagingMode::Never || !render || !terminal.stdout_tty || !terminal.foreground {
         return Decision::No;
     }
-    match mode {
+    let decision = match mode {
         PagingMode::Always => Decision::Always,
-        _ => Decision::Auto,
+        _ if terminal.auto_blocker().is_none() => Decision::Auto,
+        _ => return Decision::No,
+    };
+    if all_pageable() {
+        decision
+    } else {
+        Decision::No
     }
 }
 
@@ -54,7 +120,14 @@ pub fn renderer_is_pageable(
     is_audio: bool,
 ) -> bool {
     match renderer {
-        Renderer::Code | Renderer::Text | Renderer::Markdown | Renderer::Hex => true,
+        Renderer::Code
+        | Renderer::Text
+        | Renderer::Markdown
+        | Renderer::Hex
+        | Renderer::Binary
+        | Renderer::Archive
+        | Renderer::Document
+        | Renderer::Certificate => true,
         Renderer::Auto => {
             if is_image || is_audio {
                 return false;
@@ -62,6 +135,7 @@ pub fn renderer_is_pageable(
             match kind {
                 Kind::Text => !mime.starts_with("video/"),
                 Kind::Binary => {
+                    // Office documents render as markdown text.
                     !["image/", "audio/", "video/"]
                         .iter()
                         .any(|prefix| mime.starts_with(prefix))
@@ -198,8 +272,8 @@ pub fn plan(decision: Decision) -> Option<Plan> {
     )?;
     let Some(program) = resolve_program(&command.argv[0]) else {
         if command.explicit || decision == Decision::Always {
-            eprintln!(
-                "scat: pager '{}' not found; printing without a pager",
+            crate::report!(
+                "pager '{}' not found; printing without a pager",
                 crate::render::sanitize_str(&command.argv[0])
             );
         }
@@ -297,8 +371,8 @@ impl<W: Write> Output<W> {
                 self.write_all(&held)
             }
             Err(err) => {
-                eprintln!(
-                    "scat: pager {}: {}; printing without a pager",
+                crate::report!(
+                    "pager {}: {}; printing without a pager",
                     crate::render::sanitize_str(&plan.program.to_string_lossy()),
                     crate::util::io_message(&err)
                 );
@@ -413,13 +487,80 @@ mod tests {
     #[test]
     fn paging_decision() {
         use PagingMode::*;
-        assert_eq!(decide(Auto, true, true, true), Decision::Auto);
-        assert_eq!(decide(Always, true, true, true), Decision::Always);
-        assert_eq!(decide(Never, true, true, true), Decision::No);
-        // Not a terminal, not rendering (--raw, cat flags), or graphics involved.
-        assert_eq!(decide(Always, false, true, true), Decision::No);
-        assert_eq!(decide(Always, true, false, true), Decision::No);
-        assert_eq!(decide(Always, true, true, false), Decision::No);
+        let prompt = Terminal {
+            stdout_tty: true,
+            stdin_tty: true,
+            foreground: true,
+            job_leader: true,
+        };
+        let yes = || true;
+        assert_eq!(decide(Auto, &prompt, true, yes), Decision::Auto);
+        assert_eq!(decide(Always, &prompt, true, yes), Decision::Always);
+        assert_eq!(decide(Never, &prompt, true, yes), Decision::No);
+        // Not a terminal, not rendering (--raw, cat flags, invoked as cat), or graphics.
+        let piped = Terminal {
+            stdout_tty: false,
+            ..prompt
+        };
+        assert_eq!(decide(Always, &piped, true, yes), Decision::No);
+        assert_eq!(decide(Always, &prompt, false, yes), Decision::No);
+        assert_eq!(decide(Always, &prompt, true, || false), Decision::No);
+    }
+
+    #[test]
+    fn auto_paging_needs_a_person_at_the_prompt() {
+        use PagingMode::*;
+        let prompt = Terminal {
+            stdout_tty: true,
+            stdin_tty: true,
+            foreground: true,
+            job_leader: true,
+        };
+        let yes = || true;
+        // `./script.sh` from a terminal: stdin and stdout are the terminal, but the
+        // script's commands share its process group.
+        let script = Terminal {
+            job_leader: false,
+            ..prompt
+        };
+        assert_eq!(decide(Auto, &script, true, yes), Decision::No);
+        assert_eq!(decide(Always, &script, true, yes), Decision::Always);
+        // `scat f < input` or a program feeding stdin.
+        let stdin_redirected = Terminal {
+            stdin_tty: false,
+            ..prompt
+        };
+        assert_eq!(decide(Auto, &stdin_redirected, true, yes), Decision::No);
+        assert_eq!(
+            decide(Always, &stdin_redirected, true, yes),
+            Decision::Always
+        );
+        // `scat f &`: never, not even with `always`.
+        let background = Terminal {
+            foreground: false,
+            ..prompt
+        };
+        assert_eq!(decide(Auto, &background, true, yes), Decision::No);
+        assert_eq!(decide(Always, &background, true, yes), Decision::No);
+        assert!(background.auto_blocker().is_some());
+        assert!(prompt.auto_blocker().is_none());
+    }
+
+    #[test]
+    fn files_are_only_sniffed_when_paging_is_possible() {
+        let script = Terminal {
+            stdout_tty: true,
+            stdin_tty: true,
+            foreground: true,
+            job_leader: false,
+        };
+        let sniffed = std::cell::Cell::new(false);
+        let decision = decide(PagingMode::Auto, &script, true, || {
+            sniffed.set(true);
+            true
+        });
+        assert_eq!(decision, Decision::No);
+        assert!(!sniffed.get());
     }
 
     #[test]

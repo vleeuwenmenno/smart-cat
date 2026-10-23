@@ -49,6 +49,22 @@ Notes per method:
 - Text methods enlarge small images only up to the larger of: twice the cells the image would cover with kitty or sixel, and one sub-pixel per image pixel (at most 32 columns by 16 rows). A 16x16 icon becomes 16x8 cells of half blocks instead of filling the screen.
 - SVGs are rendered by resvg at the final pixel size, and are allowed to grow up to 4 times their intrinsic size. Text in SVGs uses the system fonts, which are loaded only when the SVG contains `<text`. `<image>` elements that point to other files are not loaded. Embedded `data:` images still work.
 
+### Cell size, HiDPI and sixel
+
+A sixel image covers one text column per started cell width and one row per started cell height, in the pixels the terminal reports. scat sizes sixel images in whole 6-pixel bands and counts the rows from the rounded height, so the image ends on the row scat planned.
+
+foot on Hyprland, measured with cursor position reports (`CSI 6 n`) and screenshots of the window:
+
+| Monitor scale | `CSI 16 t` cell | `TIOCGWINSZ` / `CSI 14 t` | 180x390 px sixel covers |
+|---|---|---|---|
+| 1 | 9x20 | agrees (cells x cell size) | 20 columns, 20 rows (cursor ends on row 20) |
+| 1.25 (fractional) | 11x25 | agrees | 17 columns, 16 rows |
+| a new window that has not settled yet | 18x39 | agrees, but for a much larger window | |
+
+foot reports cells and draws sixel pixels in the same buffer pixels, at any scale, so the sixel aspect parameters (`P1`, the `"1;1` raster attributes) do not matter there. The trap is the first moments of a new window: foot answers with scale-2 metrics (18x39 instead of 9x20) until the compositor tells it the real scale. An answer cached from that moment made every later image twice as large as the cells scat planned for it.
+
+The [terminal query cache](terminal-detection.md) therefore records the window size (`TIOCGWINSZ`) its answer was made for and is only used while the window size is unchanged; a font zoom, a move to a monitor with another scale or a window that settled since all lead to a fresh query. kitty places images in cells (`c=`/`r=`), so this affects only how many pixels are sent, never the cells covered.
+
 A 4000x3000 JPEG takes about 65 ms in a release build with text blocks, 95 ms with kitty, and 110 ms with sixel, all including decoding.
 
 ## Animation
@@ -87,6 +103,7 @@ The same output methods draw [audio cover art](audio.md#cover-art), [video poste
 - `image::show(out, &screen, &DynamicImage, &ShowOptions { max_cols, max_rows, caption, .. })` draws an image and a caption.
 - `image::draw` and `image::draw_encoded` (from file bytes, SVG included) return a `Drawn`: the encoded bytes plus the cells covered, to place yourself.
 - `image::write_beside(out, &drawn, &lines)` lays text out to the right of an image; check `image::can_write_beside(&screen)` first and draw with `pin_rows: true`.
+- `image::thumbnail(bytes, svg, max_side)` decodes with the image view's limits and scales down to `max_side` pixels (directory tiles).
 - `image::size::thumbnail_box` gives the size limits used for cover art and poster frames.
 
 `Context::image_screen()` in `render.rs` supplies the `Screen`: the chosen method, the size limits and the colours. It is detected once per run.

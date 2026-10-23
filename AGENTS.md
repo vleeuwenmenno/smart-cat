@@ -30,28 +30,43 @@ Run `make check` before handing work back.
 | `src/main.rs` | entry point and dispatch of info commands |
 | `src/cli.rs` | clap definition; GNU cat flags plus scat flags |
 | `src/cat.rs` | byte-exact GNU cat behaviour (`-n -b -s -E -T -v`) |
+| `src/fastcopy.rs` | plain copy inside the kernel (`copy_file_range`, `sendfile`, `splice`) with a read/write fallback |
 | `src/render.rs` | per-file dispatch, text rendering, control-character sanitizing |
 | `src/highlight.rs` | syntect + two-face (bat's syntaxes and themes), colour reduction |
 | `src/audio.rs` + `src/waveform.rs` | audio info view (lofty tags, symphonia peaks, braille/ASCII waveform) |
+| `src/listing.rs` + `src/listing/` | directory listing: tiles (`tiles.rs`), icons (`icons.rs`), thumbnails and their cache (`thumbs.rs`), grid and long views |
 | `src/play.rs` | `--play`: hands audio and video to mpv |
-| `src/pdf/` | PDF view: info header, `--pages` parser, page drawing and text; `helper.rs` runs hayro in a child (`--internal-pdf`), `sandbox.rs` adds rlimits and the timeout |
+| `src/pdf/` | PDF view: info header, `--pages` parser, page drawing and text; `helper.rs` runs hayro in a child (`--internal-pdf`) |
+| `src/sandbox.rs` | child processes for untrusted parsers (PDF, spreadsheets, 7z, SQLite): hidden `--internal-*` flags, rlimits, timeout, stdin input |
+| `src/office/` | office documents as markdown: `docx.rs`, `pptx.rs`, `odf.rs` (odt/odp) and `sheets.rs` (calamine) build markdown with `md.rs`; caps on parts, rows, slides and output |
+| `src/sqlite.rs` | SQLite view: read-only immutable open, fixed metadata queries, quoted identifiers, query time budget; rows drawn with `table::render_rows` |
 | `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |
 | `src/header.rs` | file name rule printed before each file when several are rendered |
 | `src/hexdump.rs` | hex dump view for binary files |
+| `src/binary.rs` | executable/library summary (goblin for ELF/PE/Mach-O/ar, wasmparser) above a short hex dump |
+| `src/archive.rs` | archive listing: zip, tar and tarballs, deb, 7z; summary header and file tree |
+| `src/cert/` | certificate and key view: PEM scanning, X.509/CSR summaries (x509-parser), key description and OpenSSH fingerprints, `authorized_keys`/`known_hosts`; private key material is never printed |
 | `src/generate.rs` | `--completions` and `--man` (clap_complete, clap_mangen) |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
 | `src/config.rs` + `src/config_template.toml` | TOML config, rules, `--init-config` |
 | `src/image/` | image view: decoding (image crate, resvg), kitty/sixel/block/ASCII encoders, sizing, animation; `image::show` for other renderers |
-| `src/term/` | colour depth, env hints, and the batched `/dev/tty` capability query |
+| `src/term/` | colour depth, env hints, the batched `/dev/tty` capability query and its cache in `$XDG_RUNTIME_DIR` |
 | `src/decompress.rs` | gzip/xz/zstd/bzip2 stream decoders (pure Rust) with a size cap |
 | `src/linestyle.rs` | per-line diff and log colouring |
 | `src/diagnose.rs` | `--diagnose` report |
 | `src/update.rs` | `--update` / `--check-update` from GitHub releases |
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
+| `tests/script_compat.rs` | shell idioms (`sh -c`, `bash -c`) run with GNU cat and scat: output, status, messages |
+| `tests/archive.rs` | archive views with zip, tar, tar.gz, 7z and deb fixtures built in the test |
+| `tests/cat_mode.rs` | strict mode through a `cat` symlink and the script-safe paging rule, on a pty via `script` |
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
+| `tests/binary.rs` | binary summaries: system binaries, a hand-built wasm module, hex fallback |
 | `tests/images.rs` | forced image output, captions, piped image bytes |
+| `tests/certificates.rs` + `tests/fixtures/test-keys/` | certificate and key view, hidden private keys, piped bytes; the fixtures are test-only keys |
 | `tests/pdf.rs` | PDF view with hand-written PDFs: header, pages, text, piped bytes, malformed files |
+| `tests/office.rs` | office documents: fixtures zipped in the test, rendered output, row cap, piped bytes, corrupt files |
+| `tests/sqlite.rs` | SQLite view with databases made by the test: output, no side files, corrupt file, hostile names |
 | `install.sh` | curl-pipe installer (POSIX sh) |
 | `docs/` | one page per feature; `docs/research.md` holds the background research |
 

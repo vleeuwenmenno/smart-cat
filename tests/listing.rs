@@ -25,6 +25,7 @@ fn scat(args: &[&str], dir: &PathBuf) -> Output {
         .env_remove("LS_COLORS")
         .env("HOME", dir)
         .env_remove("XDG_CONFIG_HOME")
+        .env("XDG_CACHE_HOME", dir.join(".cache"))
         .env("COLUMNS", "80")
         .env("LC_ALL", "C")
         .output()
@@ -173,4 +174,182 @@ fn config_can_disable_directory_listing() {
         String::from_utf8_lossy(&out.stderr),
         "scat: sub: Is a directory\n"
     );
+}
+
+/// A directory with a generated 32x32 PNG, a text file and a subdirectory.
+fn media_tree(name: &str) -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("photos")).unwrap();
+    let img = image::RgbaImage::from_fn(32, 32, |x, y| {
+        image::Rgba([(x * 8) as u8, (y * 8) as u8, 200, 255])
+    });
+    img.save(dir.join("picture.png")).unwrap();
+    std::fs::write(dir.join("notes.txt"), "hello\n").unwrap();
+    dir
+}
+
+#[test]
+fn tiles_show_half_block_thumbnails_and_names() {
+    let dir = media_tree("list-tiles");
+    let args = [
+        "-f",
+        "--style",
+        "tiles",
+        "--protocol",
+        "blocks",
+        "--color=always",
+        ".",
+    ];
+    let out = scat(&args, &dir);
+    assert!(out.status.success(), "{:?}", out);
+    let text = stdout(&out);
+    // The thumbnail is drawn with half blocks in 24-bit or palette colours.
+    assert!(text.contains('▀'), "{text:?}");
+    // Names sit centred under their tiles: folder first, then the files.
+    let names = text
+        .lines()
+        .find(|l| l.contains("photos"))
+        .expect("a name line");
+    let photos = names.find("photos").unwrap();
+    let notes = names.find("notes.txt").unwrap();
+    let picture = names.find("picture.png").unwrap();
+    assert!(photos < notes && notes < picture, "{names:?}");
+    // The text file gets a badge with its extension.
+    assert!(text.contains("TXT"), "{text:?}");
+    // The thumbnail was cached with private permissions.
+    use std::os::unix::fs::PermissionsExt;
+    let cache = dir.join(".cache/scat/thumbnails");
+    let mode = std::fs::metadata(&cache).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    let pngs = |cache: &PathBuf| {
+        std::fs::read_dir(cache)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".png")
+            })
+            .count()
+    };
+    assert_eq!(pngs(&cache), 1);
+    // A second run (from the cache) draws the same.
+    assert_eq!(stdout(&scat(&args, &dir)), text);
+}
+
+#[test]
+fn tiles_prune_the_thumbnail_cache_once_a_day() {
+    let dir = media_tree("list-tiles-prune");
+    let cache = dir.join(".cache/scat/thumbnails");
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&cache)
+            .unwrap();
+    }
+    let month_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+    let stale = cache.join("0123456789abcdef0123456789abcdef.png");
+    std::fs::write(&stale, b"old").unwrap();
+    let set_old = |path: &std::path::Path| {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(month_ago)
+            .unwrap();
+    };
+    set_old(&stale);
+    // A symlink to a file outside the cache: neither it nor its target is touched.
+    let outside = dir.join("outside.bin");
+    std::fs::write(&outside, b"keep").unwrap();
+    set_old(&outside);
+    std::os::unix::fs::symlink(&outside, cache.join("link.png")).unwrap();
+
+    let args = ["-f", "--style", "tiles", "--protocol", "ascii", "."];
+    assert!(scat(&args, &dir).status.success());
+    assert!(!stale.exists());
+    assert!(cache.join("link.png").symlink_metadata().is_ok());
+    assert_eq!(std::fs::read(&outside).unwrap(), b"keep");
+    assert!(cache.join(".pruned").is_file());
+
+    // Not due again on the next run.
+    std::fs::write(&stale, b"old").unwrap();
+    set_old(&stale);
+    assert!(scat(&args, &dir).status.success());
+    assert!(stale.exists());
+}
+
+#[test]
+fn grid_style_keeps_the_plain_listing() {
+    let dir = media_tree("list-tiles-grid");
+    let out = scat(&["-f", "--style", "grid", "--color=never", "."], &dir);
+    assert_eq!(stdout(&out), "photos/  notes.txt  picture.png\n");
+    // auto into a pipe is the grid too
+    let out = scat(&["-f", "--color=always", "--protocol", "blocks", "."], &dir);
+    assert!(!stdout(&out).contains('▀'));
+    // --long wins over --style
+    let out = scat(
+        &["-f", "--style", "tiles", "--long", "--color=never", "."],
+        &dir,
+    );
+    assert!(stdout(&out).lines().any(|l| l.ends_with("photos/")));
+}
+
+#[test]
+fn tiles_without_colours_or_thumbnails_use_outline_icons() {
+    let dir = media_tree("list-tiles-plain");
+    let out = scat(
+        &[
+            "-f",
+            "--style",
+            "tiles",
+            "--no-thumbnails",
+            "--color=never",
+            ".",
+        ],
+        &dir,
+    );
+    let text = stdout(&out);
+    assert!(!text.contains('\x1b'), "{text:?}");
+    assert!(
+        text.contains("│ PNG  │") || text.contains("| PNG  |"),
+        "{text:?}"
+    );
+    assert!(!dir.join(".cache/scat").exists());
+}
+
+#[test]
+fn tiles_sanitize_weird_names() {
+    let dir = media_tree("list-tiles-weird");
+    std::fs::write(dir.join("evil\x1b]0;pwn\x07\nname.png"), "not an image").unwrap();
+    let out = scat(
+        &[
+            "-f",
+            "--style",
+            "tiles",
+            "--protocol",
+            "blocks",
+            "--color=always",
+            "--tile-size",
+            "40x8",
+            ".",
+        ],
+        &dir,
+    );
+    let text = stdout(&out);
+    assert!(!text.contains("\x1b]"), "{text:?}");
+    assert!(!text.contains('\x07'));
+    assert!(text.contains("evil^[]0;pwn^G^Jname.png"), "{text:?}");
+}
+
+#[test]
+fn bad_tile_size_is_rejected() {
+    let dir = media_tree("list-tiles-badsize");
+    let out = scat(&["-f", "--tile-size", "nope", "."], &dir);
+    // Usage errors exit 1, like GNU cat's.
+    assert_eq!(out.status.code(), Some(1));
 }

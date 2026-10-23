@@ -1,6 +1,7 @@
 //! `scat --diagnose`: what scat detected about the terminal, config and files.
 
 use std::io::{BufRead, IsTerminal};
+use std::time::SystemTime;
 
 use crate::cli::Cli;
 use crate::config::{Loaded, Renderer};
@@ -36,13 +37,24 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
         println!("  warning: {warning}");
     }
     println!("  rules: {}", config.rules.len());
+    let strict = crate::util::invoked_as_cat() && !config.cat_mode.render;
+    let invoked = if !crate::util::invoked_as_cat() {
+        "scat"
+    } else if config.cat_mode.render {
+        "cat; rendering as scat ([cat_mode] render = true), messages say cat:"
+    } else {
+        "cat; strict mode: output exactly like GNU cat ([cat_mode] render = false)"
+    };
+    println!("  invoked as: {invoked}");
 
     let stdout_tty = std::io::stdout().is_terminal();
     let when = cli.color.unwrap_or(config.defaults.color);
     println!("\noutput");
     println!(
         "  stdout: {}",
-        if stdout_tty {
+        if stdout_tty && strict {
+            "terminal (rendering off: invoked as cat; -f still renders)"
+        } else if stdout_tty {
             "terminal (rendering on)"
         } else {
             "not a terminal (cat-compatible output unless --force-render)"
@@ -61,6 +73,25 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
     println!("  UTF-8 locale: {}", yes_no(term::utf8_locale()));
     println!("  multiplexer: {}", term::multiplexer().unwrap_or("none"));
 
+    let mode = cli.paging.unwrap_or(config.defaults.paging);
+    let terminal = crate::pager::Terminal::detect();
+    println!("\npaging");
+    println!("  mode: {mode:?}");
+    println!(
+        "  stdin terminal: {}, foreground: {}, own process group: {}",
+        yes_no(terminal.stdin_tty),
+        yes_no(terminal.foreground),
+        yes_no(terminal.job_leader)
+    );
+    println!(
+        "  auto would page long output: {}",
+        match terminal.auto_blocker() {
+            _ if strict => "no (invoked as cat)".to_string(),
+            None => "yes".to_string(),
+            Some(reason) => format!("no ({reason})"),
+        }
+    );
+
     println!("\nenvironment");
     for name in term::HINT_VARS {
         if let Some(value) = term::hint(name) {
@@ -69,6 +100,24 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
     }
 
     println!("\nterminal query (/dev/tty)");
+    let cache = term::cache::dir().zip(term::cache::Key::current());
+    match (&cache, term::cache::dir()) {
+        (Some((dir, key)), _) => {
+            match term::cache::load(dir, key, SystemTime::now(), query::WinSize::current()) {
+                Some(entry) => println!(
+                    "  cache: entry from {} s ago in {} (querying fresh anyway)",
+                    entry.age.as_secs(),
+                    dir.display()
+                ),
+                None => println!(
+                    "  cache: no fresh entry for this window size in {}",
+                    dir.display()
+                ),
+            }
+        }
+        (None, None) => println!("  cache: off (XDG_RUNTIME_DIR is not set)"),
+        (None, Some(_)) => println!("  cache: off (no controlling terminal)"),
+    }
     let caps = if term::is_basic_terminal() {
         println!(
             "  skipped: TERM={} does not answer queries",
@@ -77,7 +126,12 @@ pub fn run(cli: &Cli, loaded: &Loaded) -> i32 {
         None
     } else {
         match query::query(query::DEFAULT_TIMEOUT) {
-            Ok(caps) => Some(caps),
+            Ok(caps) => {
+                if let Some((dir, key)) = &cache {
+                    let _ = term::cache::store(dir, key, &caps, SystemTime::now());
+                }
+                Some(caps)
+            }
             Err(err) => {
                 println!("  failed: {}", io_message(&err));
                 None
@@ -229,12 +283,23 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
     );
     let is_image = crate::image::wants(&detected.mime, file_name.as_deref(), &head);
     let is_pdf = crate::pdf::wants(&detected.mime, &head);
+    let is_archive = crate::archive::detect(&head, file_name.as_deref()).is_some();
+    let is_office = crate::office::wants(&detected.mime, file_name.as_deref(), &head).is_some();
+    let is_cert = crate::cert::wants(file_name.as_deref(), &head);
+    let is_database = crate::sqlite::wants(&head);
     let renderer = match (settings.renderer, &detected.kind) {
+        (Renderer::Auto, _) if is_database => "database (auto)".to_string(),
         (Renderer::Auto, _) if is_pdf => "pdf (auto)".to_string(),
+        (Renderer::Auto, _) if is_office => "document (auto)".to_string(),
         (Renderer::Auto, _) if is_image => "image (auto)".to_string(),
+        (Renderer::Auto, _) if is_cert => "cert (auto)".to_string(),
         (Renderer::Auto, _) if detected.mime.starts_with("video/") => "video (auto)".to_string(),
         (Renderer::Auto, _) if crate::render::is_audio(&detected, file_name.as_deref()) => {
             "audio (auto)".to_string()
+        }
+        (Renderer::Auto, _) if is_archive => "archive (auto)".to_string(),
+        (Renderer::Auto, Kind::Binary) if crate::binary::wants(&head) => {
+            "binary (auto)".to_string()
         }
         (Renderer::Auto, Kind::Binary) => "hex (auto)".to_string(),
         (Renderer::Auto, Kind::Text)
@@ -304,9 +369,15 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
                 | Renderer::Image
                 | Renderer::Table
                 | Renderer::Hex
+                | Renderer::Binary
                 | Renderer::Pdf
+                | Renderer::Archive
+                | Renderer::Document
+                | Renderer::Certificate
+                | Renderer::Database
         )
-        && !(settings.renderer == Renderer::Auto && (is_image || is_pdf))
+        && !(settings.renderer == Renderer::Auto
+            && (is_image || is_pdf || is_archive || is_office || is_cert || is_database))
     {
         let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
         let language = cli.language.as_deref().or(settings.language.as_deref());

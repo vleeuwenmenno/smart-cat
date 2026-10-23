@@ -199,6 +199,14 @@ fn beside(screen: &Screen, drawn: &image::Drawn) -> bool {
         && (!drawn.is_pixel() || drawn.rows < screen.rows)
 }
 
+/// The encoded cover art of an audio file, if its tags carry one. For thumbnails.
+pub fn cover_art_bytes(path: &Path) -> Option<Vec<u8>> {
+    read_tags(&Media::File(path.to_path_buf()))
+        .ok()
+        .as_ref()
+        .and_then(cover_picture)
+}
+
 /// The front cover's bytes, else the first picture's.
 fn cover_picture(file: &TaggedFile) -> Option<Vec<u8>> {
     let pictures = || file.tags().iter().flat_map(|t| t.pictures());

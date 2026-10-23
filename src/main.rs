@@ -1,10 +1,14 @@
+mod archive;
 mod audio;
+mod binary;
 mod cat;
+mod cert;
 mod cli;
 mod config;
 mod decompress;
 mod detect;
 mod diagnose;
+mod fastcopy;
 mod generate;
 mod header;
 mod hexdump;
@@ -16,10 +20,13 @@ mod kv;
 mod linestyle;
 mod listing;
 mod markdown;
+mod office;
 mod pager;
 mod pdf;
 mod play;
 mod render;
+mod sandbox;
+mod sqlite;
 mod table;
 mod term;
 mod update;
@@ -39,12 +46,52 @@ fn main() {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
-    if let Some(code) = pdf::internal_main() {
+    if let Some(code) = pdf::internal_main()
+        .or_else(office::internal_main)
+        .or_else(archive::internal_main)
+        .or_else(sqlite::internal_main)
+    {
         std::process::exit(code);
     }
 
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => usage_error(err),
+    };
     std::process::exit(run(&cli));
+}
+
+/// Reports a command line error like GNU cat: `scat: invalid option -- 'z'`, a hint
+/// and exit status 1 (clap's own default is 2, which scripts checking for cat's
+/// status would not expect). `--help` and `--version` print and exit 0 as usual.
+fn usage_error(err: clap::Error) -> ! {
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+    if matches!(
+        err.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        err.exit();
+    }
+    let invalid = match err.get(ContextKind::InvalidArg) {
+        Some(ContextValue::String(arg)) => Some(arg.clone()),
+        _ => None,
+    };
+    let message = match (err.kind(), invalid) {
+        (ErrorKind::UnknownArgument, Some(arg)) if arg.starts_with("--") => {
+            format!("unrecognized option '{arg}'")
+        }
+        (ErrorKind::UnknownArgument, Some(arg)) if arg.starts_with('-') => {
+            format!("invalid option -- '{}'", &arg[1..])
+        }
+        _ => {
+            let text = err.render().to_string();
+            let first = text.lines().next().unwrap_or_default();
+            first.strip_prefix("error: ").unwrap_or(first).to_string()
+        }
+    };
+    crate::report!("{}", render::sanitize_str(&message));
+    eprintln!("Try '{} --help' for more information.", util::prog_name());
+    std::process::exit(1);
 }
 
 fn run(cli: &Cli) -> i32 {
@@ -65,7 +112,7 @@ fn run(cli: &Cli) -> i32 {
     }
     let loaded = config::load(cli.config.as_deref(), cli.no_config);
     for warning in &loaded.warnings {
-        eprintln!("scat: {warning}");
+        crate::report!("{warning}");
     }
     let config = &loaded.config;
 
@@ -90,5 +137,6 @@ fn run(cli: &Cli) -> i32 {
     if cli.play {
         return play::run(cli);
     }
-    render::run(cli, config)
+    let strict = util::invoked_as_cat() && !config.cat_mode.render;
+    render::run(cli, config, strict)
 }

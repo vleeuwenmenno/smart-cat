@@ -40,12 +40,23 @@ pub enum Renderer {
     Table,
     /// Hex dump of the first bytes.
     Hex,
+    /// Summary of an executable or library, then a short hex dump.
+    Binary,
     /// Coloured unified diff.
     Diff,
     /// Coloured log levels and timestamps.
     Log,
     /// PDF info header and pages as images or text.
     Pdf,
+    /// Summary and file tree of zip, tar, deb and 7z archives.
+    Archive,
+    /// Word, PowerPoint, Excel and OpenDocument files shown as markdown.
+    Document,
+    /// Certificate and key summaries; private key material is hidden.
+    #[serde(rename = "cert")]
+    Certificate,
+    /// SQLite database: header facts, tables, schemas and sample rows.
+    Database,
 }
 
 impl fmt::Display for Renderer {
@@ -61,9 +72,14 @@ impl fmt::Display for Renderer {
             Renderer::Image => "image",
             Renderer::Table => "table",
             Renderer::Hex => "hex",
+            Renderer::Binary => "binary",
             Renderer::Diff => "diff",
             Renderer::Log => "log",
             Renderer::Pdf => "pdf",
+            Renderer::Archive => "archive",
+            Renderer::Document => "document",
+            Renderer::Certificate => "cert",
+            Renderer::Database => "database",
         })
     }
 }
@@ -103,12 +119,32 @@ pub enum Directories {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+/// How a directory is listed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum ListStyle {
+    /// Tiles when the terminal can draw images, else the grid
     #[default]
+    Auto,
+    /// A grid of thumbnails and icons with the name under each
+    Tiles,
+    /// Names in columns, like ls
     Grid,
+    /// One entry per line with type, size and age
     Long,
+}
+
+/// Icons for entries without a thumbnail in the tiles view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Icons {
+    /// A folder drawn with block characters, a badge with the extension for files.
+    #[default]
+    Unicode,
+    /// Nerd Font glyphs (needs a patched font).
+    Nerd,
+    /// No icon, only the name.
+    None,
 }
 
 /// What to do with escape sequences already present in a text file.
@@ -173,7 +209,21 @@ pub struct Config {
     pub image: ImageConfig,
     pub table: TableConfig,
     pub hexdump: HexdumpConfig,
+    pub binary: BinaryConfig,
     pub pdf: PdfConfig,
+    pub archive: ArchiveConfig,
+    pub office: OfficeConfig,
+    pub sqlite: SqliteConfig,
+    pub cat_mode: CatModeConfig,
+}
+
+/// Behaviour when scat is started under the name `cat` (a `cat -> scat` symlink).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CatModeConfig {
+    /// Render on a terminal as `scat` does. Off by default: invoked as `cat`, scat
+    /// behaves exactly like GNU cat (no rendering, paging, listing or terminal query).
+    pub render: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -206,6 +256,21 @@ impl Default for HexdumpConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct BinaryConfig {
+    /// How many leading bytes the hex dump under a binary summary shows.
+    pub hex_bytes: usize,
+}
+
+impl Default for BinaryConfig {
+    fn default() -> Self {
+        Self {
+            hex_bytes: crate::binary::DEFAULT_HEX_BYTES,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct PdfConfig {
     /// Pages shown when `--pages` is not given.
     pub pages: crate::pdf::PageSpec,
@@ -222,11 +287,80 @@ impl Default for PdfConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ArchiveConfig {
+    /// Entries shown in an archive listing; 0 shows all of them.
+    pub max_entries: usize,
+}
+
+impl Default for ArchiveConfig {
+    fn default() -> Self {
+        Self { max_entries: 500 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OfficeConfig {
+    /// Data rows shown per spreadsheet sheet; 0 shows all of them.
+    pub max_rows: usize,
+}
+
+impl Default for OfficeConfig {
+    fn default() -> Self {
+        Self { max_rows: 200 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SqliteConfig {
+    /// Rows shown per table; 0 shows only the schema.
+    pub sample_rows: usize,
+    /// Tables shown in detail after the overview; 0 shows only the overview.
+    pub max_tables: usize,
+}
+
+impl Default for SqliteConfig {
+    fn default() -> Self {
+        Self {
+            sample_rows: 10,
+            max_tables: 20,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ListConfig {
     pub style: ListStyle,
     pub show_hidden: bool,
+    /// Thumbnail box of a tile, in cells (the name goes on the line below).
+    pub tile_width: u16,
+    pub tile_height: u16,
+    /// Draw thumbnails of images, videos, PDFs and audio covers in the tiles view.
+    pub thumbnails: bool,
+    pub icons: Icons,
+    /// Most thumbnails per listing; later entries get icons.
+    pub max_thumbnails: usize,
+    /// Keep generated thumbnails in `$XDG_CACHE_HOME/scat/thumbnails`.
+    pub cache: bool,
+}
+
+impl Default for ListConfig {
+    fn default() -> Self {
+        Self {
+            style: ListStyle::Auto,
+            show_hidden: false,
+            tile_width: 16,
+            tile_height: 8,
+            thumbnails: true,
+            icons: Icons::Unicode,
+            max_thumbnails: 200,
+            cache: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -370,6 +504,7 @@ impl Matcher {
 /// `image/*` style matching; `*` alone matches everything.
 fn mime_matches(pattern: &str, mime: &str) -> bool {
     match pattern.strip_suffix("/*") {
+        Some("*") => true,
         Some(prefix) => mime.split('/').next() == Some(prefix),
         None => pattern == "*" || pattern.eq_ignore_ascii_case(mime),
     }
@@ -492,17 +627,17 @@ pub fn load(explicit: Option<&Path>, disabled: bool) -> Loaded {
 
 pub fn init(explicit: Option<&Path>) -> i32 {
     let Some(path) = explicit.map(Path::to_path_buf).or_else(default_path) else {
-        eprintln!("scat: cannot find a config location: HOME is not set");
+        crate::report!("cannot find a config location: HOME is not set");
         return 1;
     };
     if path.exists() {
-        eprintln!("scat: {} already exists; not overwriting", shown(&path));
+        crate::report!("{} already exists; not overwriting", shown(&path));
         return 1;
     }
     if let Some(parent) = path.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
     {
-        eprintln!("scat: {}: {}", shown(parent), crate::util::io_message(&err));
+        crate::report!("{}: {}", shown(parent), crate::util::io_message(&err));
         return 1;
     }
     match std::fs::write(&path, TEMPLATE) {
@@ -511,7 +646,7 @@ pub fn init(explicit: Option<&Path>) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!("scat: {}: {}", shown(&path), crate::util::io_message(&err));
+            crate::report!("{}: {}", shown(&path), crate::util::io_message(&err));
             1
         }
     }
@@ -524,7 +659,7 @@ pub fn print(config: &Config) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!("scat: cannot serialize config: {err}");
+            crate::report!("cannot serialize config: {err}");
             1
         }
     }
@@ -585,6 +720,45 @@ mod tests {
         assert_eq!(config.pdf.pages.to_string(), "1-3,7");
         assert_eq!(config.pdf.max_pages, 20);
         assert!(toml::from_str::<Config>("[pdf]\npages = \"0\"").is_err());
+    }
+
+    #[test]
+    fn mime_wildcards() {
+        for pattern in ["*", "*/*"] {
+            assert!(mime_matches(pattern, "text/plain"), "{pattern}");
+            assert!(
+                mime_matches(pattern, "application/octet-stream"),
+                "{pattern}"
+            );
+        }
+        assert!(mime_matches("text/*", "text/x-rust"));
+        assert!(!mime_matches("text/*", "image/png"));
+        assert!(mime_matches("IMAGE/PNG", "image/png"));
+    }
+
+    #[test]
+    fn list_keys_parse() {
+        let config: Config = toml::from_str(
+            "[list]\nstyle = \"tiles\"\ntile_width = 20\nicons = \"nerd\"\nmax_thumbnails = 5\ncache = false",
+        )
+        .unwrap();
+        assert_eq!(config.list.style, ListStyle::Tiles);
+        assert_eq!(config.list.tile_width, 20);
+        assert_eq!(config.list.tile_height, 8);
+        assert_eq!(config.list.icons, Icons::Nerd);
+        assert_eq!(config.list.max_thumbnails, 5);
+        assert!(!config.list.cache);
+        assert!(config.list.thumbnails);
+        assert_eq!(Config::default().list.style, ListStyle::Auto);
+    }
+
+    #[test]
+    fn cat_mode_is_strict_by_default() {
+        assert!(!Config::default().cat_mode.render);
+        let config: Config = toml::from_str("[cat_mode]\nrender = true").unwrap();
+        assert!(config.cat_mode.render);
+        let template: Config = toml::from_str(TEMPLATE).unwrap();
+        assert!(!template.cat_mode.render);
     }
 
     #[test]

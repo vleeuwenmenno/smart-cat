@@ -1,5 +1,6 @@
 //! Terminal environment: colour support, locale and capability queries.
 
+pub mod cache;
 pub mod query;
 
 use std::env;
@@ -31,12 +32,46 @@ pub fn term_name() -> Option<String> {
     var("TERM")
 }
 
+/// Whether this process is in the foreground process group of the terminal `fd`.
+/// A background job (`scat file &`) that changes the terminal mode is stopped with
+/// SIGTTOU, and one that reads the terminal (a pager) with SIGTTIN; cat would just print.
+pub fn in_foreground<Fd: std::os::fd::AsFd>(fd: Fd) -> bool {
+    rustix::termios::tcgetpgrp(fd).is_ok_and(|pgrp| pgrp == rustix::process::getpgrp())
+}
+
 /// Terminals that never answer queries and support no graphics.
 pub fn is_basic_terminal() -> bool {
     match term_name().as_deref() {
         None => true,
         Some(t) => t == "dumb" || t == "linux" || t.starts_with("vt") || t == "cons25",
     }
+}
+
+/// The terminal's capabilities for a run that prints to it: from the cache when a
+/// fresh entry exists, otherwise by querying (and caching the result, including "did
+/// not answer"). `None` when stdout is not a terminal, the terminal is a basic one,
+/// the query could not run, or the terminal did not answer.
+pub fn capabilities(stdout_tty: bool) -> Option<query::Capabilities> {
+    if !stdout_tty || is_basic_terminal() {
+        return None;
+    }
+    let cache = cache::dir().zip(cache::Key::current());
+    if let Some((dir, key)) = &cache
+        && let Some(entry) = cache::load(
+            dir,
+            key,
+            std::time::SystemTime::now(),
+            query::WinSize::current(),
+        )
+    {
+        return entry.caps.answered.then_some(entry.caps);
+    }
+    // A query that could not run (background job, typeahead) is not cached.
+    let caps = query::query(query::DEFAULT_TIMEOUT).ok()?;
+    if let Some((dir, key)) = &cache {
+        let _ = cache::store(dir, key, &caps, std::time::SystemTime::now());
+    }
+    caps.answered.then_some(caps)
 }
 
 pub fn color_depth() -> ColorDepth {

@@ -5,12 +5,15 @@ use std::path::Path;
 
 use syntect::easy::HighlightLines;
 
+use crate::archive;
 use crate::audio;
+use crate::binary;
 use crate::cat::{self, CatOptions, CatState};
 use crate::cli::Cli;
 use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, PagingMode, Renderer};
 use crate::decompress;
 use crate::detect::{self, Kind, SNIFF_BYTES};
+use crate::fastcopy;
 use crate::header;
 use crate::hexdump;
 use crate::highlight::{self, Assets};
@@ -19,6 +22,7 @@ use crate::json;
 use crate::linestyle;
 use crate::listing;
 use crate::markdown;
+use crate::office;
 use crate::pager;
 use crate::table;
 use crate::term::{self, ColorDepth, query};
@@ -29,10 +33,25 @@ use crate::video;
 const MAX_RENDER_LINE: usize = 1024 * 1024;
 const RESET: &[u8] = b"\x1b[0m";
 
-pub fn run(cli: &Cli, config: &Config) -> i32 {
+/// Prints the files. `strict` (invoked as `cat` without `[cat_mode] render = true`)
+/// means no rendering on a terminal either, unless `--force-render` asks for it, and
+/// never a pager, a directory listing or a listing for no arguments.
+pub fn run(cli: &Cli, config: &Config, strict: bool) -> i32 {
+    let strict_config;
+    let config = if strict {
+        let mut cat = config.clone();
+        cat.defaults.paging = PagingMode::Never;
+        cat.defaults.no_args = crate::config::NoArgs::Stdin;
+        cat.defaults.directories = Directories::Error;
+        strict_config = cat;
+        &strict_config
+    } else {
+        config
+    };
     let stdout = io::stdout();
     let stdout_tty = stdout.is_terminal();
-    let render = !cli.raw && (stdout_tty || cli.force_render) && !cli.wants_cat_visualisation();
+    let render =
+        !cli.raw && (cli.force_render || (stdout_tty && !strict)) && !cli.wants_cat_visualisation();
     let out_identity = input::stdout_identity();
 
     let mut ctx = Context::new(cli, config, stdout_tty);
@@ -54,13 +73,17 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
         render && stdout_tty && sources.len() > 1 && !cli.plain && config.defaults.headers;
 
     // Decide on paging up front: only when every file is text-like (no graphics, no media).
-    let mode = cli.paging.unwrap_or(config.defaults.paging);
-    let decision = pager::decide(
-        mode,
-        stdout_tty,
-        render,
-        mode != PagingMode::Never && stdout_tty && render && all_pageable(&sources, &ctx),
-    );
+    let mode = if strict {
+        PagingMode::Never
+    } else {
+        cli.paging.unwrap_or(config.defaults.paging)
+    };
+    let terminal = if render && mode != PagingMode::Never {
+        pager::Terminal::detect()
+    } else {
+        pager::Terminal::default()
+    };
+    let decision = pager::decide(mode, &terminal, render, || all_pageable(&sources, &mut ctx));
     let mut output = pager::Output::new(stdout.lock(), pager::plan(decision));
     let paged = output.is_paged();
     let status = {
@@ -70,7 +93,7 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
     match output.finish() {
         Err(err) if paged && err.kind() == io::ErrorKind::BrokenPipe => status,
         Err(err) => {
-            eprintln!("scat: write error: {}", io_message(&err));
+            crate::report!("write error: {}", io_message(&err));
             1
         }
         Ok(()) => status,
@@ -99,11 +122,11 @@ fn process_all<W: Write>(
                 if pager_quit(paged, &err) {
                     return 0;
                 }
-                eprintln!("scat: write error: {}", io_message(&err));
+                crate::report!("write error: {}", io_message(&err));
                 return 1;
             }
             let _ = out.flush();
-            eprintln!("scat: {}: {}", source.display_name(), io_message(&err));
+            crate::report!("{}: {}", source.display_name(), io_message(&err));
             status = 1;
         }
     }
@@ -111,7 +134,7 @@ fn process_all<W: Write>(
         if pager_quit(paged, &err) {
             return 0;
         }
-        eprintln!("scat: write error: {}", io_message(&err));
+        crate::report!("write error: {}", io_message(&err));
         return 1;
     }
     status
@@ -119,11 +142,11 @@ fn process_all<W: Write>(
 
 /// True when every source is a file or directory that renders as plain text (or a hex
 /// dump), so a pager can show it. Standard input cannot be sniffed ahead of time.
-fn all_pageable(sources: &[Source], ctx: &Context) -> bool {
+fn all_pageable(sources: &[Source], ctx: &mut Context) -> bool {
     sources.iter().all(|source| source_pageable(source, ctx))
 }
 
-fn source_pageable(source: &Source, ctx: &Context) -> bool {
+fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     let Source::Path(path) = source else {
         return false;
     };
@@ -131,7 +154,12 @@ fn source_pageable(source: &Source, ctx: &Context) -> bool {
         return false;
     };
     if meta.is_dir() {
-        return ctx.config.defaults.directories == Directories::List;
+        if ctx.config.defaults.directories != Directories::List {
+            return false;
+        }
+        // Tiles with kitty or sixel thumbnails must never reach a pager.
+        let (style, screen) = list_style(ctx);
+        return !listing::draws_graphics(style, list_thumbnails(ctx), screen.map(|s| s.method));
     }
     if !meta.is_file() {
         return false;
@@ -143,8 +171,15 @@ fn source_pageable(source: &Source, ctx: &Context) -> bool {
         return false;
     }
     // Compressed files are decoded later and may hold anything, images included.
-    if decompress::detect(&head).is_some() {
-        return false;
+    if let Some(format) = decompress::detect(&head) {
+        // A compressed tarball gets the archive listing, which pages like text.
+        let name = source.file_name();
+        if !decompress::is_tarball(name.as_deref(), &head, format) {
+            return false;
+        }
+        let mime = detect::detect(&head).mime;
+        let renderer = ctx.config.settings_for(name.as_deref(), &mime).renderer;
+        return matches!(renderer, Renderer::Auto | Renderer::Archive | Renderer::Hex);
     }
     let detected = detect::detect(&head);
     let file_name = source.file_name();
@@ -212,6 +247,9 @@ fn process<W: Write>(
     }
 
     if !render || input.kind == InputKind::Device {
+        if ctx.cat_options.is_passthrough() {
+            return fastcopy::copy(&mut input, out);
+        }
         return write_cat(&mut input, out, &ctx.cat_options, cat_state);
     }
     if ctx.show_headers {
@@ -240,6 +278,7 @@ fn process<W: Write>(
         input.reader = BufReader::with_capacity(64 * 1024, reader);
         input.kind = InputKind::Stream;
         input.identity = None;
+        input.fd = None;
         truncated = Some(hit);
         file_name = file_name.map(|name| decompress::inner_name(&name));
         head = sniff(&mut input)?;
@@ -255,6 +294,8 @@ fn process<W: Write>(
         &head,
     );
 
+    // Archives (compressed tarballs included) are listed, not decoded as text.
+    let archive_format = archive::detect(&head, file_name.as_deref());
     let is_video = settings.renderer == Renderer::Auto && detected.mime.starts_with("video/");
     let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
     let as_markdown = match settings.renderer {
@@ -293,13 +334,29 @@ fn process<W: Write>(
             ctx.utf8,
             &mut || ctx.image_screen(),
         ),
+        Renderer::Document => {
+            let format = office::wants(&detected.mime, file_name.as_deref(), &head);
+            render_document(&mut input, out, ctx, &settings, format)
+        }
+        Renderer::Auto if office::wants(&detected.mime, file_name.as_deref(), &head).is_some() => {
+            let format = office::wants(&detected.mime, file_name.as_deref(), &head);
+            render_document(&mut input, out, ctx, &settings, format)
+        }
         Renderer::Pdf => render_pdf(&mut input, out, ctx, source),
         Renderer::Auto if crate::pdf::wants(&detected.mime, &head) => {
             render_pdf(&mut input, out, ctx, source)
         }
+        Renderer::Database => render_sqlite(&mut input, out, ctx, source),
+        Renderer::Auto if matches!(source, Source::Path(_)) && crate::sqlite::wants(&head) => {
+            render_sqlite(&mut input, out, ctx, source)
+        }
         Renderer::Image => render_image(&mut input, out, ctx, source, &head),
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
+        }
+        Renderer::Certificate => render_cert(&mut input, out, ctx, &settings, file_name.as_deref()),
+        Renderer::Auto if crate::cert::wants(file_name.as_deref(), &head) => {
+            render_cert(&mut input, out, ctx, &settings, file_name.as_deref())
         }
         Renderer::Table => render_table(
             &mut input,
@@ -317,18 +374,38 @@ fn process<W: Write>(
             &head,
             delimited.unwrap_or(table::Delimiter::Sniff),
         ),
+        Renderer::Archive => render_archive(&mut input, out, ctx, source, archive_format),
+        Renderer::Auto if archive_format.is_some() => {
+            render_archive(&mut input, out, ctx, source, archive_format)
+        }
+        Renderer::Binary => render_binary(&mut input, out, ctx, source),
+        Renderer::Auto if detected.kind == Kind::Binary && binary::wants(&head) => {
+            render_binary(&mut input, out, ctx, source)
+        }
         Renderer::Hex => render_hex(&mut input, out, ctx),
-        Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
+        Renderer::Auto if detected.kind == Kind::Binary => {
+            if crate::cert::eligible(file_name.as_deref()) {
+                hide_private_keys(&mut input);
+            }
+            render_hex(&mut input, out, ctx)
+        }
         _ if as_markdown => {
             let doc = (&settings, file_name.as_deref(), source);
             render_markdown(&mut input, out, ctx, doc, &head)
         }
-        _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
+        _ => {
+            // A key file the certificate view did not claim (the BEGIN line is past
+            // the sniffed head, or its label is malformed) still has its key hidden.
+            if settings.renderer == Renderer::Auto && crate::cert::eligible(file_name.as_deref()) {
+                hide_private_keys(&mut input);
+            }
+            render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
+        }
     };
     if truncated.is_some_and(|hit| hit.get()) {
         out.flush()?;
-        eprintln!(
-            "scat: {}: decompressed output stopped at {} (max_decompressed_bytes)",
+        crate::report!(
+            "{}: decompressed output stopped at {} (max_decompressed_bytes)",
             source.display_name(),
             human_size(ctx.config.defaults.max_decompressed_bytes)
         );
@@ -396,6 +473,27 @@ fn render_hex<W: Write>(input: &mut Input, out: &mut W, ctx: &Context) -> io::Re
     hexdump::render(out, &mut input.reader, total, &opts)
 }
 
+/// Summary table for executables and libraries, then a short hex dump.
+fn render_binary<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    source: &Source,
+) -> io::Result<()> {
+    let total = match input.kind {
+        InputKind::Regular { size } => Some(size),
+        _ => None,
+    };
+    let opts = binary::Options {
+        name: &source.display_name(),
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        hex_bytes: ctx.config.binary.hex_bytes.max(16),
+        fallback_bytes: ctx.config.hexdump.max_bytes.max(16),
+    };
+    binary::render(out, &mut input.reader, total, &opts)
+}
+
 /// Video info view. ffprobe opens the file by path, so standard input and pipes only
 /// get a notice on stderr (exit status 0, like the binary notice).
 fn render_video<W: Write>(
@@ -407,8 +505,8 @@ fn render_video<W: Write>(
 ) -> io::Result<()> {
     let (Source::Path(path), InputKind::Regular { size }) = (source, input.kind) else {
         out.flush()?;
-        eprintln!(
-            "scat: {}: video info needs a file (use --raw for bytes)",
+        crate::report!(
+            "{}: video info needs a file (use --raw for bytes)",
             source.display_name()
         );
         return Ok(());
@@ -418,6 +516,59 @@ fn render_video<W: Write>(
     video::render(out, path, &name, Some(size), mime, colors, &mut || {
         ctx.image_screen()
     })
+}
+
+/// Replaces the input with one whose private key blocks are hidden (see
+/// `cert::redact`). Used wherever `auto` or `cert` show a key file as text or hex.
+fn hide_private_keys(input: &mut Input) {
+    let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+    input.reader = BufReader::with_capacity(
+        64 * 1024,
+        Box::new(crate::cert::redact::Redacting::new(rest)),
+    );
+    input.fd = None;
+}
+
+/// Certificate and key summaries. Files that hold nothing recognisable (or are over
+/// `cert::MAX_BYTES`) are shown as text or a hex dump instead, without an error, and
+/// with any private key body hidden.
+fn render_cert<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+) -> io::Result<()> {
+    let mut data = Vec::new();
+    (&mut input.reader)
+        .take(crate::cert::MAX_BYTES + 1)
+        .read_to_end(&mut data)?;
+    if data.len() as u64 <= crate::cert::MAX_BYTES {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let opts = crate::cert::Options {
+            colors: ctx.colors,
+            utf8: ctx.utf8,
+            tab_width: settings.tab_width,
+            now,
+        };
+        let mut rendered = Vec::new();
+        if crate::cert::render(&mut rendered, &data, file_name, &opts)? {
+            return out.write_all(&rendered);
+        }
+    }
+    let binary = crate::cert::is_binary(&data[..data.len().min(SNIFF_BYTES)]);
+    let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+    input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+    // The fallback views never show a private key either.
+    hide_private_keys(input);
+    if binary {
+        render_hex(input, out, ctx)
+    } else {
+        let head = sniff(input)?;
+        render_text(input, out, ctx, settings, file_name, &head)
+    }
 }
 
 fn render_table<W: Write>(
@@ -444,16 +595,25 @@ fn list_directory<W: Write>(
     ctx: &mut Context,
     out: &mut TrackedWriter<W>,
 ) -> io::Result<()> {
-    let style = if ctx.cli.long {
-        ListStyle::Long
-    } else {
-        ctx.config.list.style
-    };
+    let (style, screen) = list_style(ctx);
+    let list = &ctx.config.list;
     let opts = listing::Options {
-        all: ctx.cli.all || ctx.config.list.show_hidden,
+        all: ctx.cli.all || list.show_hidden,
         style,
         colors: ctx.colors,
         width: listing::terminal_width(),
+        tiles: listing::TileOptions {
+            size: ctx
+                .cli
+                .tile_size
+                .unwrap_or((list.tile_width, list.tile_height)),
+            thumbnails: list_thumbnails(ctx),
+            icons: list.icons,
+            max_thumbnails: list.max_thumbnails,
+            cache: list.cache,
+            utf8: ctx.utf8,
+            screen,
+        },
     };
     // Build first so an unreadable directory prints no header, only the error.
     let mut buf = Vec::new();
@@ -467,6 +627,29 @@ fn list_directory<W: Write>(
     ctx.listed += 1;
     ctx.printed += 1;
     out.write_all(&buf)
+}
+
+/// The listing style for this run (`--long`, then `--style`, then the config), with
+/// `auto` resolved, and the image screen when the tiles view is used.
+fn list_style(ctx: &mut Context) -> (ListStyle, Option<crate::image::Screen>) {
+    let requested = if ctx.cli.long {
+        ListStyle::Long
+    } else {
+        ctx.cli.style.unwrap_or(ctx.config.list.style)
+    };
+    let basic = term::is_basic_terminal();
+    let screen = match requested {
+        ListStyle::Tiles => Some(ctx.image_screen()),
+        ListStyle::Auto if ctx.stdout_tty && !basic => Some(ctx.image_screen()),
+        _ => None,
+    };
+    let method = screen.as_ref().map(|s| s.method);
+    let style = listing::resolve_style(requested, ctx.stdout_tty, basic, method);
+    (style, screen.filter(|_| style == ListStyle::Tiles))
+}
+
+fn list_thumbnails(ctx: &Context) -> bool {
+    !ctx.cli.no_thumbnails && ctx.config.list.thumbnails
 }
 
 /// Files that get the audio view with the `auto` renderer: an `audio/*` MIME type, or
@@ -498,16 +681,7 @@ fn render_markdown<W: Write>(
     }
     let text = String::from_utf8_lossy(&data);
 
-    let light = ctx.colors && ctx.depth != ColorDepth::Ansi16 && ctx.background_is_light();
-    let opts = markdown::Options {
-        width: markdown::render_width(ctx.stdout_tty),
-        colors: ctx.colors,
-        depth: ctx.depth,
-        utf8: ctx.utf8,
-        hyperlinks: ctx.colors && ctx.stdout_tty && !term::is_basic_terminal(),
-        light,
-        tab_width: settings.tab_width,
-    };
+    let opts = markdown_options(ctx, settings, &text);
     // Both callbacks need the context; they never run at the same time.
     let ctx = std::cell::RefCell::new(ctx);
     let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
@@ -556,6 +730,61 @@ fn render_markdown<W: Write>(
         markdown_image(&screen, &path, max_cols)
     };
     let rendered = markdown::render_with_images(&text, &opts, &mut highlight, &mut images);
+    out.write_all(&rendered)
+}
+
+/// Only inline code uses the light/dark palette; code blocks ask for a theme
+/// themselves. Documents without backticks never need the terminal's background.
+fn markdown_options(ctx: &mut Context, settings: &FileSettings, text: &str) -> markdown::Options {
+    let light = ctx.colors
+        && ctx.depth != ColorDepth::Ansi16
+        && text.contains('`')
+        && ctx.markdown_light(settings);
+    markdown::Options {
+        width: markdown::render_width(ctx.stdout_tty),
+        colors: ctx.colors,
+        depth: ctx.depth,
+        utf8: ctx.utf8,
+        hyperlinks: ctx.colors && ctx.stdout_tty && !term::is_basic_terminal(),
+        light,
+        tab_width: settings.tab_width,
+    }
+}
+
+/// Word, PowerPoint, Excel and OpenDocument files: converted to markdown, then drawn
+/// by the markdown renderer. A dim header line names the type and the page, slide or
+/// sheet count.
+fn render_document<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    format: Option<office::Format>,
+) -> io::Result<()> {
+    let Some(format) = format else {
+        return Err(io::Error::other(
+            "cannot read document: not a recognised office document",
+        ));
+    };
+    let size = match input.kind {
+        InputKind::Regular { size } => Some(size),
+        _ => None,
+    };
+    let data = office::read_input(input)?;
+    let limits = office::Limits {
+        max_rows: ctx.config.office.max_rows,
+    };
+    let converted = office::convert(format, &data, &limits)
+        .map_err(|err| io::Error::other(format!("cannot read document: {err}")))?;
+    drop(data);
+    office::write_header(
+        out,
+        &office::header_text(format, &converted, size),
+        ctx.colors,
+        ctx.cli.plain,
+    )?;
+    let opts = markdown_options(ctx, settings, &converted.markdown);
+    let rendered = markdown::render(&converted.markdown, &opts, &mut |_, _| None);
     out.write_all(&rendered)
 }
 
@@ -658,14 +887,7 @@ impl<'a> Context<'a> {
 
     fn capabilities(&mut self) -> Option<&query::Capabilities> {
         if self.caps.is_none() {
-            let caps = if self.stdout_tty && !term::is_basic_terminal() {
-                query::query(query::DEFAULT_TIMEOUT)
-                    .ok()
-                    .filter(|c| c.answered)
-            } else {
-                None
-            };
-            self.caps = Some(caps);
+            self.caps = Some(term::capabilities(self.stdout_tty));
         }
         self.caps.as_ref().and_then(Option::as_ref)
     }
@@ -707,8 +929,30 @@ impl<'a> Context<'a> {
             .is_some_and(|bg| bg == 7 || bg == 15)
     }
 
+    /// The theme set by `--theme`, `SCAT_THEME`, a rule or `[defaults] theme`.
+    fn fixed_theme(&self, settings: &FileSettings) -> Option<String> {
+        self.cli.theme.clone().or_else(|| settings.theme.clone())
+    }
+
+    /// Whether markdown's inline code gets the light palette. With a fixed theme this
+    /// follows the theme's own background, so no terminal query is needed.
+    fn markdown_light(&mut self, settings: &FileSettings) -> bool {
+        let Some(name) = self.fixed_theme(settings) else {
+            return self.background_is_light();
+        };
+        let assets = self.assets.get_or_insert_with(Assets::load);
+        assets
+            .theme(&name)
+            .and_then(|theme| theme.settings.background)
+            .is_some_and(|c| {
+                0.2126 * f64::from(c.r) + 0.7152 * f64::from(c.g) + 0.0722 * f64::from(c.b) > 128.0
+            })
+    }
+
+    /// The highlighting theme. Asks the terminal for its background only when no theme
+    /// is fixed and the colour depth allows more than the 16-colour `ansi` theme.
     fn theme_name(&mut self, settings: &FileSettings) -> String {
-        if let Some(theme) = self.cli.theme.clone().or_else(|| settings.theme.clone()) {
+        if let Some(theme) = self.fixed_theme(settings) {
             return theme;
         }
         if self.depth == ColorDepth::Ansi16 {
@@ -780,6 +1024,61 @@ fn render_pdf<W: Write>(
     crate::pdf::render(out, source, input, &opts)
 }
 
+/// Archive listing. Needs the format found by sniffing; `--archive` style forcing of a
+/// file that is not an archive reports an error instead of guessing.
+fn render_archive<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    source: &Source,
+    format: Option<archive::Format>,
+) -> io::Result<()> {
+    let Some(format) = format else {
+        return Err(io::Error::other("not a supported archive"));
+    };
+    let reader = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+    let (path, size) = match (source, input.kind) {
+        (Source::Path(path), InputKind::Regular { size }) => (Some(path.as_path()), Some(size)),
+        _ => (None, None),
+    };
+    let name = source.display_name();
+    let opts = archive::Options {
+        max_entries: ctx.config.archive.max_entries,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        width: listing::terminal_width(),
+        max_scan_bytes: ctx.config.defaults.max_decompressed_bytes,
+    };
+    let source = archive::Source {
+        reader: Box::new(reader),
+        path,
+        size,
+    };
+    archive::render(out, format, &name, source, &opts)
+}
+
+/// SQLite database view; only regular files, SQLite needs to open the path itself.
+fn render_sqlite<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    source: &Source,
+) -> io::Result<()> {
+    let name = source.display_name();
+    let opts = crate::sqlite::Options {
+        name: &name,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        width: listing::terminal_width(),
+        sample_rows: ctx.config.sqlite.sample_rows,
+        max_tables: ctx.config.sqlite.max_tables,
+    };
+    // Built first so a failing database prints only the error, no half a view.
+    let mut buf = Vec::new();
+    crate::sqlite::render(&mut buf, source, input, &opts)?;
+    out.write_all(&buf)
+}
+
 fn render_text<W: Write>(
     input: &mut Input,
     out: &mut W,
@@ -806,31 +1105,38 @@ fn render_text<W: Write>(
         .text_kind
         .filter(|_| ctx.colors)
         .map(linestyle::Styler::new);
+    // An empty file has nothing to highlight.
     let want_highlight = ctx.colors
         && settings.renderer != Renderer::Text
         && small_enough
-        && ctx.text_kind.is_none();
-    let theme_name = if want_highlight {
-        Some(ctx.theme_name(settings))
-    } else {
-        None
-    };
+        && ctx.text_kind.is_none()
+        && !head.is_empty();
     if want_highlight && ctx.assets.is_none() {
         ctx.assets = Some(Assets::load());
     }
+    let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
+    let first_line = format!("{first_line}\n");
+    let language = cli.language.as_deref().or(settings.language.as_deref());
+    // The theme (and with it the terminal query for the background) is only needed
+    // once a syntax is found: plain text is never highlighted.
+    let has_syntax = want_highlight
+        && ctx
+            .assets
+            .as_ref()
+            .is_some_and(|a| a.find_syntax(language, file_name, &first_line).is_some());
+    if want_highlight
+        && !has_syntax
+        && let Some(language) = language
+    {
+        crate::report!("unknown language '{language}'; see --list-languages");
+    }
+    let theme_name = has_syntax.then(|| ctx.theme_name(settings));
     let mut highlighter = None;
     if let (Some(assets), Some(theme_name)) = (ctx.assets.as_ref(), theme_name) {
-        let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
-        let language = cli.language.as_deref().or(settings.language.as_deref());
-        let syntax = assets.find_syntax(language, file_name, &format!("{first_line}\n"));
-        if syntax.is_none()
-            && let Some(language) = language
-        {
-            eprintln!("scat: unknown language '{language}'; see --list-languages");
-        }
+        let syntax = assets.find_syntax(language, file_name, &first_line);
         let theme = assets.theme(&theme_name).or_else(|| {
             if !ctx.warned_theme {
-                eprintln!("scat: unknown theme '{theme_name}'; see --list-themes");
+                crate::report!("unknown theme '{theme_name}'; see --list-themes");
                 ctx.warned_theme = true;
             }
             assets.theme(&ctx.config.defaults.theme_dark)

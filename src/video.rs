@@ -99,7 +99,12 @@ enum Run {
 
 /// Runs `cmd` with stdin and stderr closed, collecting at most `max` bytes of stdout;
 /// kills it after [`PROBE_TIMEOUT`].
-fn run(mut cmd: Command, max: u64) -> Run {
+fn run(cmd: Command, max: u64) -> Run {
+    run_within(cmd, max, PROBE_TIMEOUT)
+}
+
+/// [`run`] with its own time limit.
+fn run_within(mut cmd: Command, max: u64, timeout: Duration) -> Run {
     let child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -119,7 +124,7 @@ fn run(mut cmd: Command, max: u64) -> Run {
         buf
     });
 
-    let deadline = Instant::now() + PROBE_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -198,6 +203,37 @@ fn poster_frame(path: &Path, duration: Option<f64>) -> Option<Vec<u8>> {
         }
         _ => None,
     }
+}
+
+/// A small frame (at most `max_side` pixels) as PNG for directory thumbnails, taken
+/// 2 s in (the first frame for shorter videos). `None` without ffmpeg, on failure, or
+/// after `timeout`.
+pub fn thumbnail_png(path: &Path, max_side: u32, timeout: Duration) -> Option<Vec<u8>> {
+    let ffmpeg = which("ffmpeg")?;
+    let scale = format!("scale={max_side}:{max_side}:force_original_aspect_ratio=decrease");
+    let started = Instant::now();
+    for seek in [Some("2"), None] {
+        let mut cmd = Command::new(&ffmpeg);
+        cmd.args(["-nostdin", "-v", "error"]);
+        if let Some(at) = seek {
+            cmd.args(["-ss", at]);
+        }
+        cmd.arg("-i")
+            .arg(ff_target(path))
+            .args(["-an", "-sn", "-frames:v", "1", "-vf", &scale])
+            .args(["-f", "image2pipe", "-vcodec", "png", "-"]);
+        let left = timeout.checked_sub(started.elapsed())?;
+        match run_within(cmd, MAX_FRAME_OUTPUT + 1, left) {
+            Run::Done(status, png)
+                if status.success() && !png.is_empty() && png.len() as u64 <= MAX_FRAME_OUTPUT =>
+            {
+                return Some(png);
+            }
+            Run::TimedOut => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Draws the poster frame above the table. ASCII output and tiny terminals get none.

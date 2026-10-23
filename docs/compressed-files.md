@@ -14,7 +14,7 @@ Multi-member gzip, bzip2 and xz files (several streams appended together) are re
 ## What is not decompressed
 
 - Piped output. `scat app.log.gz | cat` prints the compressed bytes, exactly like `cat`. `-f` renders into a pipe, and then decompresses.
-- Tarballs: `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.tar.zst`, `.tar.bz2`, `.tbz2`, and any stream whose first block is a tar header (`ustar`). They are not a text stream; they get the [hex dump](rendering.md#hex-dump) of the compressed bytes until an archive listing exists.
+- Tarballs: `.tar.gz`, `.tgz`, `.tar.xz`, `.txz`, `.tar.zst`, `.tar.bz2`, `.tbz2`, and any stream whose first block is a tar header (`ustar`). They are not a text stream; they get the [archive listing](archives.md) instead.
 - Anything with a `raw` renderer rule.
 
 ## Limits

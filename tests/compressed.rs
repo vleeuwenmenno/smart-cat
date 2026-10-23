@@ -115,19 +115,25 @@ fn inner_name_picks_the_renderer() {
 }
 
 #[test]
-fn tarballs_are_not_shown_as_text() {
+fn tarballs_are_listed_not_shown_as_text_or_hex() {
     let d = dir("tar");
-    let mut tar = vec![0u8; 1024];
-    tar[..5].copy_from_slice(b"a.txt");
-    tar[257..262].copy_from_slice(b"ustar");
-    tar[512..524].copy_from_slice(b"hello world\n");
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_size(12);
+    header.set_mode(0o644);
+    builder
+        .append_data(&mut header, "a.txt", &b"hello world\n"[..])
+        .unwrap();
+    let tar = builder.into_inner().unwrap();
     // By name and by content (a tarball with an unhelpful name).
     for name in ["a.tar.gz", "a.tgz", "unhelpful.gz"] {
         std::fs::write(d.join(name), gzip(&tar)).unwrap();
         let out = scat(&d, &["-f", "--color=never", name]);
-        // The compressed bytes go to the hex dump; the inner text is never shown.
         let got = text(&out);
-        assert!(got.starts_with("00000000  1f 8b"), "{name}: {got:?}");
+        assert!(got.contains("tar archive (gzip)"), "{name}: {got:?}");
+        assert!(got.contains("└── a.txt"), "{name}: {got:?}");
+        // Neither a hex dump of the compressed bytes nor the file contents.
+        assert!(!got.starts_with("00000000"), "{name}: {got:?}");
         assert!(!got.contains("hello world"), "{name}: {got:?}");
     }
 }
