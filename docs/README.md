@@ -11,6 +11,7 @@
 | [syntax-highlighting.md](syntax-highlighting.md) | language detection, themes, colour depth |
 | [video.md](video.md) | video info view: streams, duration, ffprobe dependency |
 | [pdf.md](pdf.md) | PDF documents: info header, pages as images, `--pages`, `--text`, the parser sandbox |
+| [office-documents.md](office-documents.md) | Word, PowerPoint, Excel and OpenDocument files shown as markdown: slides, sheets, limits |
 | [compressed-files.md](compressed-files.md) | transparent `.gz` `.xz` `.zst` `.bz2`: inner type detection, tarballs, size cap |
 | [diffs-and-logs.md](diffs-and-logs.md) | coloured unified diffs and log files: levels, timestamps, streaming |
 | [images.md](images.md) | images in the terminal: kitty, sixel, block and ASCII output, sizing, animation, SVG |

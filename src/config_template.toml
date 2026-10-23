@@ -83,6 +83,11 @@ pages = "1"
 # Most pages drawn as images per file (text output is not limited).
 max_pages = 20
 
+[office]
+# Word, PowerPoint, Excel and OpenDocument files are shown as markdown. Data rows shown
+# per spreadsheet sheet before a "... more rows" note; 0 shows every row.
+max_rows = 200
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -95,6 +100,7 @@ channel = "stable"
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
 #   "video" (info view), "table" (CSV/TSV table), "diff" (coloured diff),
 #   "log" (coloured log levels), "hex" (hex dump), "pdf" (info and pages),
+#   "document" (docx, pptx, xlsx, odt, ... as markdown),
 #   "raw" (exactly cat)
 
 # [[rule]]

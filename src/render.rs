@@ -19,6 +19,7 @@ use crate::json;
 use crate::linestyle;
 use crate::listing;
 use crate::markdown;
+use crate::office;
 use crate::pager;
 use crate::table;
 use crate::term::{self, ColorDepth, query};
@@ -293,6 +294,14 @@ fn process<W: Write>(
             ctx.utf8,
             &mut || ctx.image_screen(),
         ),
+        Renderer::Document => {
+            let format = office::wants(&detected.mime, file_name.as_deref(), &head);
+            render_document(&mut input, out, ctx, &settings, format)
+        }
+        Renderer::Auto if office::wants(&detected.mime, file_name.as_deref(), &head).is_some() => {
+            let format = office::wants(&detected.mime, file_name.as_deref(), &head);
+            render_document(&mut input, out, ctx, &settings, format)
+        }
         Renderer::Pdf => render_pdf(&mut input, out, ctx, source),
         Renderer::Auto if crate::pdf::wants(&detected.mime, &head) => {
             render_pdf(&mut input, out, ctx, source)
@@ -498,16 +507,7 @@ fn render_markdown<W: Write>(
     }
     let text = String::from_utf8_lossy(&data);
 
-    let light = ctx.colors && ctx.depth != ColorDepth::Ansi16 && ctx.background_is_light();
-    let opts = markdown::Options {
-        width: markdown::render_width(ctx.stdout_tty),
-        colors: ctx.colors,
-        depth: ctx.depth,
-        utf8: ctx.utf8,
-        hyperlinks: ctx.colors && ctx.stdout_tty && !term::is_basic_terminal(),
-        light,
-        tab_width: settings.tab_width,
-    };
+    let opts = markdown_options(ctx, settings);
     // Both callbacks need the context; they never run at the same time.
     let ctx = std::cell::RefCell::new(ctx);
     let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
@@ -556,6 +556,56 @@ fn render_markdown<W: Write>(
         markdown_image(&screen, &path, max_cols)
     };
     let rendered = markdown::render_with_images(&text, &opts, &mut highlight, &mut images);
+    out.write_all(&rendered)
+}
+
+fn markdown_options(ctx: &mut Context, settings: &FileSettings) -> markdown::Options {
+    let light = ctx.colors && ctx.depth != ColorDepth::Ansi16 && ctx.background_is_light();
+    markdown::Options {
+        width: markdown::render_width(ctx.stdout_tty),
+        colors: ctx.colors,
+        depth: ctx.depth,
+        utf8: ctx.utf8,
+        hyperlinks: ctx.colors && ctx.stdout_tty && !term::is_basic_terminal(),
+        light,
+        tab_width: settings.tab_width,
+    }
+}
+
+/// Word, PowerPoint, Excel and OpenDocument files: converted to markdown, then drawn
+/// by the markdown renderer. A dim header line names the type and the page, slide or
+/// sheet count.
+fn render_document<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    format: Option<office::Format>,
+) -> io::Result<()> {
+    let Some(format) = format else {
+        return Err(io::Error::other(
+            "cannot read document: not a recognised office document",
+        ));
+    };
+    let size = match input.kind {
+        InputKind::Regular { size } => Some(size),
+        _ => None,
+    };
+    let data = office::read_input(input)?;
+    let limits = office::Limits {
+        max_rows: ctx.config.office.max_rows,
+    };
+    let converted = office::convert(format, &data, &limits)
+        .map_err(|err| io::Error::other(format!("cannot read document: {err}")))?;
+    drop(data);
+    office::write_header(
+        out,
+        &office::header_text(format, &converted, size),
+        ctx.colors,
+        ctx.cli.plain,
+    )?;
+    let opts = markdown_options(ctx, settings);
+    let rendered = markdown::render(&converted.markdown, &opts, &mut |_, _| None);
     out.write_all(&rendered)
 }
 

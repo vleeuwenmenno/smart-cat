@@ -54,7 +54,11 @@ pub fn renderer_is_pageable(
     is_audio: bool,
 ) -> bool {
     match renderer {
-        Renderer::Code | Renderer::Text | Renderer::Markdown | Renderer::Hex => true,
+        Renderer::Code
+        | Renderer::Text
+        | Renderer::Markdown
+        | Renderer::Hex
+        | Renderer::Document => true,
         Renderer::Auto => {
             if is_image || is_audio {
                 return false;
@@ -62,6 +66,7 @@ pub fn renderer_is_pageable(
             match kind {
                 Kind::Text => !mime.starts_with("video/"),
                 Kind::Binary => {
+                    // Office documents render as markdown text.
                     !["image/", "audio/", "video/"]
                         .iter()
                         .any(|prefix| mime.starts_with(prefix))

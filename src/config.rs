@@ -46,6 +46,8 @@ pub enum Renderer {
     Log,
     /// PDF info header and pages as images or text.
     Pdf,
+    /// Word, PowerPoint, Excel and OpenDocument files shown as markdown.
+    Document,
 }
 
 impl fmt::Display for Renderer {
@@ -64,6 +66,7 @@ impl fmt::Display for Renderer {
             Renderer::Diff => "diff",
             Renderer::Log => "log",
             Renderer::Pdf => "pdf",
+            Renderer::Document => "document",
         })
     }
 }
@@ -174,6 +177,7 @@ pub struct Config {
     pub table: TableConfig,
     pub hexdump: HexdumpConfig,
     pub pdf: PdfConfig,
+    pub office: OfficeConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -219,6 +223,19 @@ impl Default for PdfConfig {
             pages: crate::pdf::PageSpec::default(),
             max_pages: 20,
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OfficeConfig {
+    /// Data rows shown per spreadsheet sheet; 0 shows all of them.
+    pub max_rows: usize,
+}
+
+impl Default for OfficeConfig {
+    fn default() -> Self {
+        Self { max_rows: 200 }
     }
 }
 

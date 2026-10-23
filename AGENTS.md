@@ -35,6 +35,7 @@ Run `make check` before handing work back.
 | `src/audio.rs` + `src/waveform.rs` | audio info view (lofty tags, symphonia peaks, braille/ASCII waveform) |
 | `src/play.rs` | `--play`: hands audio and video to mpv |
 | `src/pdf/` | PDF view: info header, `--pages` parser, page drawing and text; `helper.rs` runs hayro in a child (`--internal-pdf`), `sandbox.rs` adds rlimits and the timeout |
+| `src/office/` | office documents as markdown: `docx.rs`, `pptx.rs`, `odf.rs` (odt/odp) and `sheets.rs` (calamine) build markdown with `md.rs`; caps on parts, rows, slides and output |
 | `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |
 | `src/header.rs` | file name rule printed before each file when several are rendered |
 | `src/hexdump.rs` | hex dump view for binary files |
@@ -52,6 +53,7 @@ Run `make check` before handing work back.
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
 | `tests/images.rs` | forced image output, captions, piped image bytes |
 | `tests/pdf.rs` | PDF view with hand-written PDFs: header, pages, text, piped bytes, malformed files |
+| `tests/office.rs` | office documents: fixtures zipped in the test, rendered output, row cap, piped bytes, corrupt files |
 | `install.sh` | curl-pipe installer (POSIX sh) |
 | `docs/` | one page per feature; `docs/research.md` holds the background research |
 
