@@ -174,12 +174,16 @@ fn scripts_run_from_a_terminal_do_not_page() {
     // Known exception (docs/paging.md): a shell started as a job that runs a single
     // command execs it, so scat takes over the job's group and pages, exactly as when
     // typed. Nothing in the process tree tells the two apart.
-    let single = on_pty(
-        &dir,
-        &format!("exec /bin/sh -c \"'{SCAT}' -p long.txt\""),
-        &pager,
-    );
-    assert!(single.contains("PAGED:"), "{single:?}");
+    // bash does this exec optimisation; dash (Debian/Ubuntu `/bin/sh`) does not, so
+    // the exception is only checked with bash.
+    if std::path::Path::new("/bin/bash").exists() {
+        let single = on_pty(
+            &dir,
+            &format!("exec /bin/bash -c \"'{SCAT}' -p long.txt\""),
+            &pager,
+        );
+        assert!(single.contains("PAGED:"), "{single:?}");
+    }
     // The documented way out for automation on a pseudo-terminal.
     let never = on_pty(
         &dir,
