@@ -8,7 +8,12 @@ use crate::config::ColorWhen;
 ///
 /// When standard output is not a terminal, scat writes exactly what cat would.
 #[derive(Parser, Debug)]
-#[command(name = "scat", version, max_term_width = 100)]
+#[command(
+    name = "scat",
+    version,
+    max_term_width = 100,
+    args_override_self = true
+)]
 pub struct Cli {
     /// Files to print. With no FILE, or when FILE is -, read standard input.
     #[arg(value_name = "FILE")]

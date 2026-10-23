@@ -31,7 +31,10 @@ Printing an untrusted file straight to a terminal is risky: escape sequences can
 - keeps SGR colour sequences (`ESC[...m`) so coloured logs still look right, unless `ansi = "escape"` is set, in which case they are shown as `^[[31m`;
 - strips SGR sequences when colours are off (`NO_COLOR`, `--color=never`);
 - replaces C1 control characters (U+0080 to U+009F) and invalid UTF-8 with `�`;
+- shows Unicode bidirectional controls as `<U+202E>` (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069), so they cannot silently reorder a line ("Trojan Source"); ordinary right-to-left text is shown as is;
 - resets colours at the end of each file.
+
+File names in scat's own messages on stderr (`scat: NAME: ...`, the binary-file notice) and config paths in warnings get the same treatment, so a file name cannot smuggle an escape sequence to the terminal either.
 
 Piped output is never changed: that is cat's contract.
 

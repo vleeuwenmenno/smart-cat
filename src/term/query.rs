@@ -51,10 +51,60 @@ impl Drop for RawGuard<'_> {
     }
 }
 
+/// Blocks the signals that would stop or kill scat while the terminal is raw, and
+/// unblocks them when dropped. Signals that arrive in between stay pending and are
+/// delivered on unblock, after the terminal mode has been restored.
+struct SignalGuard {
+    previous: libc::sigset_t,
+}
+
+impl SignalGuard {
+    fn block() -> io::Result<Self> {
+        // SAFETY: sigset_t is plain data that sigemptyset initialises; the pointers
+        // passed to sigaddset and pthread_sigmask are valid for the calls.
+        unsafe {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            for signal in [
+                libc::SIGINT,
+                libc::SIGTERM,
+                libc::SIGHUP,
+                libc::SIGQUIT,
+                libc::SIGTSTP,
+            ] {
+                libc::sigaddset(&mut set, signal);
+            }
+            let mut previous: libc::sigset_t = std::mem::zeroed();
+            match libc::pthread_sigmask(libc::SIG_BLOCK, &set, &mut previous) {
+                0 => Ok(Self { previous }),
+                err => Err(io::Error::from_raw_os_error(err)),
+            }
+        }
+    }
+}
+
+impl Drop for SignalGuard {
+    fn drop(&mut self) {
+        // SAFETY: restores the mask saved in `block`.
+        unsafe {
+            libc::pthread_sigmask(libc::SIG_SETMASK, &self.previous, std::ptr::null_mut());
+        }
+    }
+}
+
 pub fn query(timeout: Duration) -> io::Result<Capabilities> {
     let started = Instant::now();
     let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
 
+    // Input already waiting (typeahead) would be mixed with the answers and consumed;
+    // skip the query and let the caller fall back to environment hints.
+    if rustix::io::ioctl_fionread(&tty).unwrap_or(0) > 0 {
+        return Err(io::Error::other("input is pending on the terminal"));
+    }
+
+    // Declared before the raw guard, so it drops after it: signals are delivered only
+    // once the terminal mode is back.
+    let _signals = SignalGuard::block()?;
     let saved = tcgetattr(&tty)?;
     let mut raw = saved.clone();
     raw.make_raw();
@@ -247,6 +297,27 @@ mod tests {
         assert_eq!(caps.window_pixels, Some((1200, 800)));
         assert_eq!(caps.background, Some((30, 30, 46)));
         assert_eq!(caps.background_is_light(), Some(false));
+    }
+
+    fn blocked(signal: libc::c_int) -> bool {
+        // SAFETY: reads this thread's signal mask into a zeroed sigset_t.
+        unsafe {
+            let mut current: libc::sigset_t = std::mem::zeroed();
+            libc::pthread_sigmask(libc::SIG_BLOCK, std::ptr::null(), &mut current);
+            libc::sigismember(&current, signal) == 1
+        }
+    }
+
+    #[test]
+    fn signals_are_blocked_only_while_the_guard_lives() {
+        assert!(!blocked(libc::SIGINT));
+        let guard = SignalGuard::block().unwrap();
+        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGTSTP] {
+            assert!(blocked(signal), "signal {signal}");
+        }
+        drop(guard);
+        assert!(!blocked(libc::SIGINT));
+        assert!(!blocked(libc::SIGTSTP));
     }
 
     #[test]

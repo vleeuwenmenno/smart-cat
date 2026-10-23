@@ -16,6 +16,12 @@ scat opens `/dev/tty`, switches it to raw mode and sends one batch:
 
 Every terminal answers DA1, and answers come back in order. So once the DA1 answer arrives, anything that was not answered is unsupported, and scat does not wait any longer. A 200 ms limit covers terminals that answer nothing. The terminal mode is restored afterwards.
 
+While the terminal is in raw mode, scat blocks `SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT` and `SIGTSTP`. A Ctrl-C (or `kill`) during the query is delivered right after the terminal mode is restored, so it can never leave the terminal raw.
+
+### Typeahead
+
+Answers and keystrokes arrive on the same `/dev/tty`. If input is already waiting when scat is about to query (you typed ahead while a previous command ran), scat skips the query and uses the environment hints instead, so that input is left for your shell. Keys typed during the query window itself (at most 200 ms, usually a few ms) are still read along with the answers and lost; that small window is accepted.
+
 Inside tmux, the kitty query is wrapped in tmux passthrough (needs `set -g allow-passthrough on`).
 
 ## When scat does not query

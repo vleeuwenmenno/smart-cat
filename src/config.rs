@@ -285,6 +285,11 @@ pub struct Loaded {
     pub warnings: Vec<String>,
 }
 
+/// A path for a message on stderr, with control characters made visible.
+fn shown(path: &Path) -> String {
+    crate::render::sanitize_str(&path.to_string_lossy())
+}
+
 pub fn default_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -318,7 +323,7 @@ pub fn load(explicit: Option<&Path>, disabled: bool) -> Loaded {
         Err(err) => {
             loaded.warnings.push(format!(
                 "config {}: {}",
-                path.display(),
+                shown(&path),
                 crate::util::io_message(&err)
             ));
             return loaded;
@@ -331,7 +336,7 @@ pub fn load(explicit: Option<&Path>, disabled: bool) -> Loaded {
         }
         Err(err) => loaded.warnings.push(format!(
             "config {}: {}; using defaults",
-            path.display(),
+            shown(&path),
             err.message()
         )),
     }
@@ -344,17 +349,13 @@ pub fn init(explicit: Option<&Path>) -> i32 {
         return 1;
     };
     if path.exists() {
-        eprintln!("scat: {} already exists; not overwriting", path.display());
+        eprintln!("scat: {} already exists; not overwriting", shown(&path));
         return 1;
     }
     if let Some(parent) = path.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
     {
-        eprintln!(
-            "scat: {}: {}",
-            parent.display(),
-            crate::util::io_message(&err)
-        );
+        eprintln!("scat: {}: {}", shown(parent), crate::util::io_message(&err));
         return 1;
     }
     match std::fs::write(&path, TEMPLATE) {
@@ -363,11 +364,7 @@ pub fn init(explicit: Option<&Path>) -> i32 {
             0
         }
         Err(err) => {
-            eprintln!(
-                "scat: {}: {}",
-                path.display(),
-                crate::util::io_message(&err)
-            );
+            eprintln!("scat: {}: {}", shown(&path), crate::util::io_message(&err));
             1
         }
     }

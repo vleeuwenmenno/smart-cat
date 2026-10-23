@@ -11,8 +11,10 @@ The script works from fish, bash and zsh because the pipe runs it with `sh`. It:
 1. picks the build for your CPU (`x86_64` or `aarch64`; Linux only);
 2. downloads `scat-<target>.tar.gz` and its `.sha256` from GitHub releases;
 3. checks the SHA-256 and stops on a mismatch;
-4. installs `scat` to `~/.local/bin`, replacing an older version atomically;
+4. copies the binary to a fresh `mktemp` file next to the target (`~/.local/bin/.scat.XXXXXX`), runs its `--version`, and only then renames it over `scat`, so a broken download keeps the old install; the staged file is removed on any failure;
 5. tells you how to add the directory to `PATH` if it is missing.
+
+The script body is one function called on its last line, so a download cut short by `curl | sh` runs nothing.
 
 Options go after `sh -s --`:
 
@@ -60,7 +62,9 @@ scat --update --pre     # include pre-releases
 
 Set `channel = "prerelease"` under `[update]` in the [config](configuration.md) to always include pre-releases.
 
-`scat --update` downloads the release for your platform with `curl`, verifies the SHA-256, checks that the new binary runs, and then replaces the running binary in place with a rename. It needs write access to the directory scat lives in. If scat came from a package manager or lives in a system directory, update it the same way you installed it.
+`scat --update` looks through all releases (up to 1000), downloads the archive for your platform with `curl`, and verifies its SHA-256 in memory. It stages the archive in a new private directory (mode 0700, random name) next to the binary, extracts `scat` there, and checks that it is a regular file (not a symlink or directory) whose `--version` prints exactly `scat <new version>`. Only then does it replace the running binary with a rename. It needs write access to the directory scat lives in. If scat came from a package manager or lives in a system directory, update it the same way you installed it.
+
+A scat built by cargo (running from a `target/debug` or `target/release` directory) refuses to update itself, since `make` would overwrite it again; rebuild from source instead. Set `SCAT_UPDATE_FORCE=1` to replace it anyway.
 
 ## Uninstall
 

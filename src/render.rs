@@ -63,7 +63,7 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
             status = 1;
         }
     }
-    if let Err(err) = out.flush() {
+    if let Err(err) = cat::finish(&mut out, &mut cat_state).and_then(|()| out.flush()) {
         eprintln!("scat: write error: {}", io_message(&err));
         return 1;
     }
@@ -86,11 +86,7 @@ fn process<W: Write>(
         return list_directory(path, ctx, out);
     }
     let mut input = input::open(source)?;
-    if let InputKind::Regular { size } = input.kind
-        && size > 0
-        && out_identity.is_some()
-        && out_identity == input.identity
-    {
+    if input::copies_onto_itself(source, &input, out_identity) {
         return Err(io::Error::other("input file is output file"));
     }
 
@@ -491,6 +487,14 @@ fn sanitize(
                 *column += 1;
                 i += 1;
             }
+            // Bidi controls reorder what is shown (Trojan Source); show them instead.
+            0xd8 | 0xe2 if bidi_control(&text[i..]).is_some() => {
+                let (code, len) = bidi_control(&text[i..]).unwrap_or_default();
+                let shown = format!("<U+{code:04X}>");
+                out.extend_from_slice(shown.as_bytes());
+                *column += shown.len();
+                i += len - 1;
+            }
             _ => {
                 out.push(byte);
                 if byte & 0xc0 != 0x80 {
@@ -501,6 +505,19 @@ fn sanitize(
         i += 1;
     }
     passed_sgr
+}
+
+/// The code point and UTF-8 length of a bidirectional formatting control at the start
+/// of `bytes`: U+061C, U+200E, U+200F, U+202A..U+202E and U+2066..U+2069.
+fn bidi_control(bytes: &[u8]) -> Option<(u32, usize)> {
+    match *bytes {
+        [0xd8, 0x9c, ..] => Some((0x061c, 2)),
+        [0xe2, 0x80, b @ (0x8e | 0x8f | 0xaa..=0xae), ..] => {
+            Some((0x2000 + u32::from(b - 0x80), 3))
+        }
+        [0xe2, 0x81, b @ 0xa6..=0xa9, ..] => Some((0x2040 + u32::from(b - 0x80), 3)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -520,6 +537,18 @@ mod tests {
         assert_eq!(clean("a\x1b]0;pwned\x07b", SgrMode::Keep), "a^[]0;pwned^Gb");
         assert_eq!(clean("\x1b]52;c;aGk=\x07", SgrMode::Keep), "^[]52;c;aGk=^G");
         assert_eq!(clean("x\u{9b}31m", SgrMode::Keep), "x\u{fffd}31m");
+    }
+
+    #[test]
+    fn shows_bidi_controls() {
+        // Trojan Source: an RLO/LRI must not reorder the line silently.
+        assert_eq!(
+            clean("a\u{202e}b\u{2066}c\u{200f}d\u{61c}e", SgrMode::Keep),
+            "a<U+202E>b<U+2066>c<U+200F>d<U+061C>e"
+        );
+        // Ordinary right-to-left text is left alone.
+        assert_eq!(clean("שלום مرحبا", SgrMode::Keep), "שלום مرحبا");
+        assert_eq!(clean("\u{2010}\u{2070}", SgrMode::Keep), "\u{2010}\u{2070}");
     }
 
     #[test]

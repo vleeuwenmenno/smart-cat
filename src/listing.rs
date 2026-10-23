@@ -195,9 +195,10 @@ pub fn safe_name(name: &str) -> String {
         .collect()
 }
 
+/// Zero-width and invisible formatting characters. Bidi controls never get here:
+/// `sanitize_str` already shows them as `<U+XXXX>`.
 fn is_invisible(c: char) -> bool {
-    matches!(c as u32,
-        0x200b..=0x200f | 0x202a..=0x202e | 0x2060..=0x206f | 0xfeff | 0x061c | 0x180e)
+    matches!(c as u32, 0x200b..=0x200d | 0x2060..=0x2065 | 0x206a..=0x206f | 0xfeff | 0x180e)
 }
 
 /// Colours by file type, from `LS_COLORS` when set, otherwise defaults.
