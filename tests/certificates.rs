@@ -282,3 +282,64 @@ fn unparsable_pem_falls_back_to_text() {
     assert!(out.stderr.is_empty());
     assert_eq!(String::from_utf8(out.stdout).unwrap(), content);
 }
+
+/// Writes `data` to a scratch file and returns its rendered view, without and with
+/// colours (the second covers the highlighted text path).
+fn view_data(name: &str, data: &[u8]) -> Vec<String> {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("cert-fallbacks");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, data).unwrap();
+    let path = path.to_string_lossy().into_owned();
+    ["--color=never", "--color=always"]
+        .iter()
+        .map(|color| {
+            let out = run(&["-f", color, &path]);
+            assert_eq!(out.status.code(), Some(0), "{out:?}");
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn fallbacks_hide_private_keys() {
+    let key = read("rsa-pkcs8.key");
+    let body = body_lines("rsa-pkcs8.key");
+    let with = |extra: &[u8], before: bool| {
+        let mut data = Vec::new();
+        if before {
+            data.extend_from_slice(extra);
+            data.extend_from_slice(&key);
+        } else {
+            data.extend_from_slice(&key);
+            data.extend_from_slice(extra);
+        }
+        data
+    };
+    let odd = b"-----BEGIN private key-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n".to_vec();
+    let cases: Vec<(&str, Vec<u8>)> = vec![
+        // Over the 4 MiB limit of the certificate view.
+        ("oversize.pem", with(&b"# padding\n".repeat(420_000), false)),
+        // Not UTF-8 after the key.
+        ("nonutf8.pem", with(b"# notes\n\xff\n", false)),
+        // The BEGIN line is past the sniffed head, so `auto` picks plain text.
+        ("late.txt", with(&b"# notes\n".repeat(2000), true)),
+        ("late", with(&b"# notes\n".repeat(2000), true)),
+        // A NUL byte first: binary, shown as a hex dump.
+        ("nul.key", with(b"\0\n", true)),
+        // A label scat does not parse.
+        ("odd.pem", odd),
+    ];
+    for (name, data) in cases {
+        for out in view_data(name, &data) {
+            for line in &body {
+                assert!(!out.contains(line.as_str()), "{name}: {line}");
+            }
+            assert!(!out.contains("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"), "{name}");
+            // The hex dump splits the note over its rows (and colours each byte).
+            if !out.contains("00000000") {
+                assert!(out.contains("private key material hidden"), "{name}: {out}");
+            }
+        }
+    }
+}

@@ -35,6 +35,13 @@ What this means in practice:
 | `sudo scat big.log` | depends on sudo: with `use_pty` (the default since sudo 1.9.14) the command leads its own group and pages; without it, it prints |
 | `scat big.log < input` | no: standard input is not the terminal |
 | `scat big.log &` | no: background job |
+| `bash -c 'scat big.log'` typed at a prompt, `script -c 'scat big.log'`, any wrapper started as a job that ends by running scat as its only command | **yes**: see below |
+
+### Exception: shells that exec a single command
+
+`bash -c 'scat big.log'` (also `sh -c`, `ssh -t host scat big.log`) does not start scat as a child: a shell that has a single command left to run replaces itself with it (`exec`). scat then keeps the shell's process ID, its process group and its place as the terminal's foreground job. That is exactly the state of a command typed at the prompt; no process ID, group, session, parent or terminal check can tell the two apart. So `auto` pages there.
+
+This only matters when such a wrapper itself was started as a job on a terminal, for example automation that drives a pseudo-terminal (`script`, `expect`, a CI step with a pty) and runs `bash -c 'scat file'`. Add `--paging never` (or set `SCAT_PAGING=never`) there. Once the shell has a second command to run (`bash -c 'scat file; true'`), or it is a script file, scat is its child and does not page.
 
 `--diagnose` shows the three facts and whether `auto` would page.
 

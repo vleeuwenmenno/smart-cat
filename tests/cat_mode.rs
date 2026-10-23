@@ -164,6 +164,29 @@ fn scripts_run_from_a_terminal_do_not_page() {
         &pager,
     );
     assert!(always.contains("PAGED:"), "{always:?}");
+    // `sh -c` with more than one command keeps scat inside the shell's group.
+    let multi = on_pty(
+        &dir,
+        &format!("exec /bin/sh -c \"'{SCAT}' -p long.txt; true\""),
+        &pager,
+    );
+    assert!(!multi.contains("PAGED:"), "{multi:?}");
+    // Known exception (docs/paging.md): a shell started as a job that runs a single
+    // command execs it, so scat takes over the job's group and pages, exactly as when
+    // typed. Nothing in the process tree tells the two apart.
+    let single = on_pty(
+        &dir,
+        &format!("exec /bin/sh -c \"'{SCAT}' -p long.txt\""),
+        &pager,
+    );
+    assert!(single.contains("PAGED:"), "{single:?}");
+    // The documented way out for automation on a pseudo-terminal.
+    let never = on_pty(
+        &dir,
+        &format!("exec /bin/sh -c \"'{SCAT}' -p --paging never long.txt\""),
+        &pager,
+    );
+    assert!(!never.contains("PAGED:"), "{never:?}");
 }
 
 #[test]
