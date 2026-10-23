@@ -330,6 +330,10 @@ fn process<W: Write>(
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
         }
+        Renderer::Certificate => render_cert(&mut input, out, ctx, &settings, file_name.as_deref()),
+        Renderer::Auto if crate::cert::wants(file_name.as_deref(), &head) => {
+            render_cert(&mut input, out, ctx, &settings, file_name.as_deref())
+        }
         Renderer::Table => render_table(
             &mut input,
             out,
@@ -476,6 +480,45 @@ fn render_video<W: Write>(
     video::render(out, path, &name, Some(size), mime, colors, &mut || {
         ctx.image_screen()
     })
+}
+
+/// Certificate and key summaries. Files that hold nothing recognisable (or are over
+/// `cert::MAX_BYTES`) are shown as text or a hex dump instead, without an error.
+fn render_cert<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+) -> io::Result<()> {
+    let mut data = Vec::new();
+    (&mut input.reader)
+        .take(crate::cert::MAX_BYTES + 1)
+        .read_to_end(&mut data)?;
+    if data.len() as u64 <= crate::cert::MAX_BYTES {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let opts = crate::cert::Options {
+            colors: ctx.colors,
+            utf8: ctx.utf8,
+            tab_width: settings.tab_width,
+            now,
+        };
+        let mut rendered = Vec::new();
+        if crate::cert::render(&mut rendered, &data, file_name, &opts)? {
+            return out.write_all(&rendered);
+        }
+    }
+    let binary = crate::cert::is_binary(&data[..data.len().min(SNIFF_BYTES)]);
+    let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+    input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+    if binary {
+        render_hex(input, out, ctx)
+    } else {
+        let head = sniff(input)?;
+        render_text(input, out, ctx, settings, file_name, &head)
+    }
 }
 
 fn render_table<W: Write>(

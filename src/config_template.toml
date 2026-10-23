@@ -111,7 +111,7 @@ channel = "stable"
 #   "log" (coloured log levels), "hex" (hex dump), "binary" (executable summary), "pdf" (info and pages),
 #   "archive" (summary and file tree),
 #   "document" (docx, pptx, xlsx, odt, ... as markdown),
-#   "raw" (exactly cat)
+#   "cert" (certificate and key summaries; private keys hidden), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

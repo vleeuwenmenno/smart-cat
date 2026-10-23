@@ -52,6 +52,9 @@ pub enum Renderer {
     Archive,
     /// Word, PowerPoint, Excel and OpenDocument files shown as markdown.
     Document,
+    /// Certificate and key summaries; private key material is hidden.
+    #[serde(rename = "cert")]
+    Certificate,
 }
 
 impl fmt::Display for Renderer {
@@ -73,6 +76,7 @@ impl fmt::Display for Renderer {
             Renderer::Pdf => "pdf",
             Renderer::Archive => "archive",
             Renderer::Document => "document",
+            Renderer::Certificate => "cert",
         })
     }
 }

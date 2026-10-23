@@ -32,6 +32,7 @@ Background and library choices are in [research.md](research.md).
   - diff and log colouring ([diffs-and-logs.md](diffs-and-logs.md))
   - [executable and library summaries](binaries.md): ELF, PE, Mach-O, WebAssembly and `ar` archives, above a short hex dump
   - [archive listing](archives.md): zip, tar, tarballs, deb and 7z as a file tree with sizes and dates
+  - [certificates and keys](certificates-and-keys.md): X.509 and CSR summaries with expiry colours and chains, public keys, `authorized_keys`/`known_hosts`, private keys with the material hidden
 - **Output polish**
   - [paging](paging.md) through `less -RFX` (auto: only when output exceeds the screen), file headers for several files
   - [hex dump](rendering.md#hex-dump) for binary files
@@ -44,6 +45,6 @@ Background and library choices are in [research.md](research.md).
 |---|---|
 | M2, images (rest) | kitty Unicode placeholders for tmux; octants; iTerm2 inline images |
 | M3, documents and media (rest) | landlock/seccomp for the PDF helper |
-| M4, format pack (rest) | SQLite, notebooks, certificates |
+| M4, format pack (rest) | SQLite, notebooks, PGP keys |
 
 The full list of formats under consideration is in [research.md §8](research.md#8-file-format-index).

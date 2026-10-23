@@ -42,6 +42,7 @@ Run `make check` before handing work back.
 | `src/hexdump.rs` | hex dump view for binary files |
 | `src/binary.rs` | executable/library summary (goblin for ELF/PE/Mach-O/ar, wasmparser) above a short hex dump |
 | `src/archive.rs` | archive listing: zip, tar and tarballs, deb, 7z; summary header and file tree |
+| `src/cert/` | certificate and key view: PEM scanning, X.509/CSR summaries (x509-parser), key description and OpenSSH fingerprints, `authorized_keys`/`known_hosts`; private key material is never printed |
 | `src/generate.rs` | `--completions` and `--man` (clap_complete, clap_mangen) |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
@@ -58,6 +59,7 @@ Run `make check` before handing work back.
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
 | `tests/binary.rs` | binary summaries: system binaries, a hand-built wasm module, hex fallback |
 | `tests/images.rs` | forced image output, captions, piped image bytes |
+| `tests/certificates.rs` + `tests/fixtures/test-keys/` | certificate and key view, hidden private keys, piped bytes; the fixtures are test-only keys |
 | `tests/pdf.rs` | PDF view with hand-written PDFs: header, pages, text, piped bytes, malformed files |
 | `tests/office.rs` | office documents: fixtures zipped in the test, rendered output, row cap, piped bytes, corrupt files |
 | `install.sh` | curl-pipe installer (POSIX sh) |

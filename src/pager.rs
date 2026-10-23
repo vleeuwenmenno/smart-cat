@@ -60,7 +60,8 @@ pub fn renderer_is_pageable(
         | Renderer::Hex
         | Renderer::Binary
         | Renderer::Archive
-        | Renderer::Document => true,
+        | Renderer::Document
+        | Renderer::Certificate => true,
         Renderer::Auto => {
             if is_image || is_audio {
                 return false;

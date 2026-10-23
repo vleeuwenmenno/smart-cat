@@ -15,6 +15,7 @@
 | [binaries.md](binaries.md) | executables, libraries and wasm: ELF, PE, Mach-O and `ar` summaries, security flags, fallbacks |
 | [archives.md](archives.md) | zip, tar, tarballs, deb, 7z: summary and file tree, caps, hostile names |
 | [office-documents.md](office-documents.md) | Word, PowerPoint, Excel and OpenDocument files shown as markdown: slides, sheets, limits |
+| [certificates-and-keys.md](certificates-and-keys.md) | X.509 certificates, CSRs, public keys, SSH key files; private keys with their material hidden |
 | [compressed-files.md](compressed-files.md) | transparent `.gz` `.xz` `.zst` `.bz2`: inner type detection, tarballs, size cap |
 | [diffs-and-logs.md](diffs-and-logs.md) | coloured unified diffs and log files: levels, timestamps, streaming |
 | [images.md](images.md) | images in the terminal: kitty, sixel, block and ASCII output, sizing, animation, SVG |

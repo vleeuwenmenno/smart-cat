@@ -2,6 +2,7 @@ mod archive;
 mod audio;
 mod binary;
 mod cat;
+mod cert;
 mod cli;
 mod config;
 mod decompress;
