@@ -40,6 +40,10 @@ pub enum Renderer {
     Table,
     /// Hex dump of the first bytes.
     Hex,
+    /// Coloured unified diff.
+    Diff,
+    /// Coloured log levels and timestamps.
+    Log,
 }
 
 impl fmt::Display for Renderer {
@@ -55,6 +59,8 @@ impl fmt::Display for Renderer {
             Renderer::Image => "image",
             Renderer::Table => "table",
             Renderer::Hex => "hex",
+            Renderer::Diff => "diff",
+            Renderer::Log => "log",
         })
     }
 }
@@ -213,6 +219,7 @@ pub struct Defaults {
     pub tab_width: usize,
     pub ansi: AnsiMode,
     pub max_highlight_bytes: u64,
+    pub max_decompressed_bytes: u64,
     pub no_args: NoArgs,
     pub directories: Directories,
     pub paging: PagingMode,
@@ -231,6 +238,7 @@ impl Default for Defaults {
             tab_width: 4,
             ansi: AnsiMode::KeepSgr,
             max_highlight_bytes: 16 * 1024 * 1024,
+            max_decompressed_bytes: 1024 * 1024 * 1024,
             no_args: NoArgs::List,
             directories: Directories::List,
             paging: PagingMode::Auto,

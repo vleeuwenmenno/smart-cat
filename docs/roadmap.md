@@ -26,6 +26,8 @@ Background and library choices are in [research.md](research.md).
   - `--play` hands audio and video to mpv
 - **M4, format pack** (partial)
   - CSV/TSV/PSV tables and minified JSON pretty-printing ([data-files.md](data-files.md))
+  - transparent `.gz/.xz/.zst/.bz2` decompression ([compressed-files.md](compressed-files.md))
+  - diff and log colouring ([diffs-and-logs.md](diffs-and-logs.md))
 - **Output polish**
   - [paging](paging.md) through `less -RFX` (auto: only when output exceeds the screen), file headers for several files
   - [hex dump](rendering.md#hex-dump) for binary files
@@ -39,6 +41,6 @@ Background and library choices are in [research.md](research.md).
 | M1, text (rest) | inline images in markdown |
 | M2, images (rest) | kitty Unicode placeholders for tmux; octants; iTerm2 inline images |
 | M3, documents and media (rest) | PDF pages (hayro, with poppler as fallback); audio cover art and video poster frame |
-| M4, format pack (rest) | transparent `.gz/.xz/.zst`, diffs, logs, archives, ELF, SQLite, notebooks, certificates, office documents |
+| M4, format pack (rest) | archives (tarball and zip listing), ELF, SQLite, notebooks, certificates, office documents |
 
 The full list of formats under consideration is in [research.md §8](research.md#8-file-format-index).
