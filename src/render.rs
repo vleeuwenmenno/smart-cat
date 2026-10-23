@@ -67,7 +67,7 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
             && stdout_tty
             && render
             && term::in_foreground(&stdout)
-            && all_pageable(&sources, &ctx),
+            && all_pageable(&sources, &mut ctx),
     );
     let mut output = pager::Output::new(stdout.lock(), pager::plan(decision));
     let paged = output.is_paged();
@@ -127,11 +127,11 @@ fn process_all<W: Write>(
 
 /// True when every source is a file or directory that renders as plain text (or a hex
 /// dump), so a pager can show it. Standard input cannot be sniffed ahead of time.
-fn all_pageable(sources: &[Source], ctx: &Context) -> bool {
+fn all_pageable(sources: &[Source], ctx: &mut Context) -> bool {
     sources.iter().all(|source| source_pageable(source, ctx))
 }
 
-fn source_pageable(source: &Source, ctx: &Context) -> bool {
+fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     let Source::Path(path) = source else {
         return false;
     };
@@ -139,7 +139,12 @@ fn source_pageable(source: &Source, ctx: &Context) -> bool {
         return false;
     };
     if meta.is_dir() {
-        return ctx.config.defaults.directories == Directories::List;
+        if ctx.config.defaults.directories != Directories::List {
+            return false;
+        }
+        // Tiles with kitty or sixel thumbnails must never reach a pager.
+        let (style, screen) = list_style(ctx);
+        return !listing::draws_graphics(style, list_thumbnails(ctx), screen.map(|s| s.method));
     }
     if !meta.is_file() {
         return false;
@@ -545,16 +550,25 @@ fn list_directory<W: Write>(
     ctx: &mut Context,
     out: &mut TrackedWriter<W>,
 ) -> io::Result<()> {
-    let style = if ctx.cli.long {
-        ListStyle::Long
-    } else {
-        ctx.config.list.style
-    };
+    let (style, screen) = list_style(ctx);
+    let list = &ctx.config.list;
     let opts = listing::Options {
-        all: ctx.cli.all || ctx.config.list.show_hidden,
+        all: ctx.cli.all || list.show_hidden,
         style,
         colors: ctx.colors,
         width: listing::terminal_width(),
+        tiles: listing::TileOptions {
+            size: ctx
+                .cli
+                .tile_size
+                .unwrap_or((list.tile_width, list.tile_height)),
+            thumbnails: list_thumbnails(ctx),
+            icons: list.icons,
+            max_thumbnails: list.max_thumbnails,
+            cache: list.cache,
+            utf8: ctx.utf8,
+            screen,
+        },
     };
     // Build first so an unreadable directory prints no header, only the error.
     let mut buf = Vec::new();
@@ -568,6 +582,29 @@ fn list_directory<W: Write>(
     ctx.listed += 1;
     ctx.printed += 1;
     out.write_all(&buf)
+}
+
+/// The listing style for this run (`--long`, then `--style`, then the config), with
+/// `auto` resolved, and the image screen when the tiles view is used.
+fn list_style(ctx: &mut Context) -> (ListStyle, Option<crate::image::Screen>) {
+    let requested = if ctx.cli.long {
+        ListStyle::Long
+    } else {
+        ctx.cli.style.unwrap_or(ctx.config.list.style)
+    };
+    let basic = term::is_basic_terminal();
+    let screen = match requested {
+        ListStyle::Tiles => Some(ctx.image_screen()),
+        ListStyle::Auto if ctx.stdout_tty && !basic => Some(ctx.image_screen()),
+        _ => None,
+    };
+    let method = screen.as_ref().map(|s| s.method);
+    let style = listing::resolve_style(requested, ctx.stdout_tty, basic, method);
+    (style, screen.filter(|_| style == ListStyle::Tiles))
+}
+
+fn list_thumbnails(ctx: &Context) -> bool {
+    !ctx.cli.no_thumbnails && ctx.config.list.thumbnails
 }
 
 /// Files that get the audio view with the `auto` renderer: an `audio/*` MIME type, or

@@ -87,6 +87,7 @@ The same output methods draw [audio cover art](audio.md#cover-art), [video poste
 - `image::show(out, &screen, &DynamicImage, &ShowOptions { max_cols, max_rows, caption, .. })` draws an image and a caption.
 - `image::draw` and `image::draw_encoded` (from file bytes, SVG included) return a `Drawn`: the encoded bytes plus the cells covered, to place yourself.
 - `image::write_beside(out, &drawn, &lines)` lays text out to the right of an image; check `image::can_write_beside(&screen)` first and draw with `pin_rows: true`.
+- `image::thumbnail(bytes, svg, max_side)` decodes with the image view's limits and scales down to `max_side` pixels (directory tiles).
 - `image::size::thumbnail_box` gives the size limits used for cover art and poster frames.
 
 `Context::image_screen()` in `render.rs` supplies the `Screen`: the chosen method, the size limits and the colours. It is detected once per run.

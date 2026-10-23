@@ -38,8 +38,14 @@ Command line flags, then `SCAT_*` environment variables, then matching `[[rule]]
 
 | Key | Default | Meaning |
 |---|---|---|
-| `style` | `"grid"` | `"grid"` or `"long"` (`--long` for one run) |
+| `style` | `"auto"` | `"auto"` (tiles when images can be drawn, else grid), `"tiles"`, `"grid"` or `"long"` (`--style`, `--long` for one run) |
 | `show_hidden` | `false` | show dot entries (`--all` for one run) |
+| `tile_width` | `16` | width of a tile's thumbnail box in cells (`--tile-size WxH` for one run) |
+| `tile_height` | `8` | height of a tile's thumbnail box in cells; the name goes below |
+| `thumbnails` | `true` | thumbnails of images, videos, PDFs and audio covers in tiles (`--no-thumbnails` for one run) |
+| `icons` | `"unicode"` | icons for entries without a thumbnail: `"unicode"`, `"nerd"` (needs a Nerd Font) or `"none"` |
+| `max_thumbnails` | `200` | most thumbnails per listing; the rest get icons |
+| `cache` | `true` | read freedesktop thumbnails and keep scat's own in `$XDG_CACHE_HOME/scat/thumbnails` |
 
 See [directory-listing.md](directory-listing.md).
 

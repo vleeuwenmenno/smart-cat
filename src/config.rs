@@ -116,12 +116,32 @@ pub enum Directories {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+/// How a directory is listed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum ListStyle {
+    /// Tiles when the terminal can draw images, else the grid
     #[default]
+    Auto,
+    /// A grid of thumbnails and icons with the name under each
+    Tiles,
+    /// Names in columns, like ls
     Grid,
+    /// One entry per line with type, size and age
     Long,
+}
+
+/// Icons for entries without a thumbnail in the tiles view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Icons {
+    /// A folder drawn with block characters, a badge with the extension for files.
+    #[default]
+    Unicode,
+    /// Nerd Font glyphs (needs a patched font).
+    Nerd,
+    /// No icon, only the name.
+    None,
 }
 
 /// What to do with escape sequences already present in a text file.
@@ -279,11 +299,36 @@ impl Default for OfficeConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ListConfig {
     pub style: ListStyle,
     pub show_hidden: bool,
+    /// Thumbnail box of a tile, in cells (the name goes on the line below).
+    pub tile_width: u16,
+    pub tile_height: u16,
+    /// Draw thumbnails of images, videos, PDFs and audio covers in the tiles view.
+    pub thumbnails: bool,
+    pub icons: Icons,
+    /// Most thumbnails per listing; later entries get icons.
+    pub max_thumbnails: usize,
+    /// Keep generated thumbnails in `$XDG_CACHE_HOME/scat/thumbnails`.
+    pub cache: bool,
+}
+
+impl Default for ListConfig {
+    fn default() -> Self {
+        Self {
+            style: ListStyle::Auto,
+            show_hidden: false,
+            tile_width: 16,
+            tile_height: 8,
+            thumbnails: true,
+            icons: Icons::Unicode,
+            max_thumbnails: 200,
+            cache: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -657,6 +702,22 @@ mod tests {
         assert!(mime_matches("text/*", "text/x-rust"));
         assert!(!mime_matches("text/*", "image/png"));
         assert!(mime_matches("IMAGE/PNG", "image/png"));
+    }
+
+    #[test]
+    fn list_keys_parse() {
+        let config: Config = toml::from_str(
+            "[list]\nstyle = \"tiles\"\ntile_width = 20\nicons = \"nerd\"\nmax_thumbnails = 5\ncache = false",
+        )
+        .unwrap();
+        assert_eq!(config.list.style, ListStyle::Tiles);
+        assert_eq!(config.list.tile_width, 20);
+        assert_eq!(config.list.tile_height, 8);
+        assert_eq!(config.list.icons, Icons::Nerd);
+        assert_eq!(config.list.max_thumbnails, 5);
+        assert!(!config.list.cache);
+        assert!(config.list.thumbnails);
+        assert_eq!(Config::default().list.style, ListStyle::Auto);
     }
 
     #[test]

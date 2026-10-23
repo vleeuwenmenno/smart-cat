@@ -37,7 +37,7 @@ Background and library choices are in [research.md](research.md).
   - [paging](paging.md) through `less -RFX` (auto: only when output exceeds the screen), file headers for several files
   - [hex dump](rendering.md#hex-dump) for binary files
   - `--completions SHELL` and `--man`, shipped in release archives
-- **Directory listing**: grid and `--long` views, `LS_COLORS`, `scat` alone lists the current directory (thumbnails come after image output, M2)
+- **Directory listing**: tiles with thumbnails (images, video frames, PDF pages, cover art) and icons, grid and `--long` views, `LS_COLORS`, a thumbnail cache that also reads freedesktop thumbnails, `scat` alone lists the current directory ([directory-listing.md](directory-listing.md))
 
 ## Next
 

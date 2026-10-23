@@ -50,11 +50,32 @@ paging = "auto"
 headers = true
 
 [list]
-# "grid" (like ls) or "long" (one entry per line with size and age).
-style = "grid"
+# "auto" (tiles when the terminal can draw images, else the grid), "tiles"
+# (thumbnails and icons with the name under each), "grid" (like ls) or "long"
+# (one entry per line with size and age). `scat --style NAME` for one run.
+style = "auto"
 
 # Show names starting with a dot. `scat --all` does this for one run.
 show_hidden = false
+
+# Thumbnail box of a tile in terminal cells; the name goes on the line below.
+# `scat --tile-size 20x10` for one run.
+tile_width = 16
+tile_height = 8
+
+# Thumbnails of images, videos (ffmpeg), PDFs and audio cover art in the tiles view.
+# `scat --no-thumbnails` for one run.
+thumbnails = true
+
+# Icons for entries without a thumbnail: "unicode" (a folder or a badge with the
+# extension), "nerd" (Nerd Font glyphs; needs a patched font) or "none".
+icons = "unicode"
+
+# Most thumbnails per listing; the rest get icons.
+max_thumbnails = 200
+
+# Keep generated thumbnails in $XDG_CACHE_HOME/scat/thumbnails.
+cache = true
 
 [hexdump]
 # Binary files show a hex dump of this many leading bytes.

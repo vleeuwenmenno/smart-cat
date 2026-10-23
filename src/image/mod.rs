@@ -52,7 +52,7 @@ impl Method {
         }
     }
 
-    fn is_pixel(self) -> bool {
+    pub fn is_pixel(self) -> bool {
         matches!(self, Method::Kitty | Method::Sixel)
     }
 }
@@ -367,6 +367,28 @@ pub fn draw_encoded(
         _ => decoded.first_frame()?,
     };
     draw(screen, &img, opts).map_err(|e| e.to_string())
+}
+
+/// Decodes an encoded image (raster, or SVG when `svg`) with the same limits as the
+/// image view and scales it down to fit `max_side` pixels. Animations give their first
+/// frame; SVGs are rendered at that size. For directory thumbnails.
+pub fn thumbnail(data: Vec<u8>, svg: bool, max_side: u32) -> Result<RgbaImage, String> {
+    if data.len() as u64 > MAX_FILE_BYTES {
+        return Err("image too large".into());
+    }
+    let max_side = max_side.max(1);
+    let decoded = decode::Decoded::open(data, svg)?;
+    if let decode::Decoded::Svg { .. } = decoded {
+        let (w, h) = decoded.size();
+        let scale = f64::from(max_side) / f64::from(w.max(h).max(1));
+        let fit = |v: u32| ((f64::from(v) * scale).round() as u32).clamp(1, max_side);
+        return decoded.render_svg(fit(w), fit(h));
+    }
+    let img = decoded.first_frame()?;
+    if img.width() <= max_side && img.height() <= max_side {
+        return Ok(img.to_rgba8());
+    }
+    Ok(img.thumbnail(max_side, max_side).to_rgba8())
 }
 
 /// SVGs may be drawn up to this many times their intrinsic size.
