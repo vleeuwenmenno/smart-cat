@@ -28,6 +28,7 @@ Inside tmux, the kitty query is wrapped in tmux passthrough (needs `set -g allow
 
 - standard output is not a terminal;
 - `TERM` is unset, `dumb`, `linux` or `vt*` (the Linux console and serial lines do not answer);
+- scat runs as a background job (`scat file &`): changing the terminal mode would stop it with `SIGTTOU`;
 - nothing being printed needs it. Only syntax highlighting without an explicit theme and images with `--protocol auto|kitty|sixel` trigger the query.
 
 ## `scat --diagnose`

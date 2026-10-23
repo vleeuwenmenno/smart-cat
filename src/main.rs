@@ -5,6 +5,7 @@ mod config;
 mod decompress;
 mod detect;
 mod diagnose;
+mod fastcopy;
 mod generate;
 mod header;
 mod hexdump;
@@ -43,8 +44,44 @@ fn main() {
         std::process::exit(code);
     }
 
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => usage_error(err),
+    };
     std::process::exit(run(&cli));
+}
+
+/// Reports a command line error like GNU cat: `scat: invalid option -- 'z'`, a hint
+/// and exit status 1 (clap's own default is 2, which scripts checking for cat's
+/// status would not expect). `--help` and `--version` print and exit 0 as usual.
+fn usage_error(err: clap::Error) -> ! {
+    use clap::error::{ContextKind, ContextValue, ErrorKind};
+    if matches!(
+        err.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        err.exit();
+    }
+    let invalid = match err.get(ContextKind::InvalidArg) {
+        Some(ContextValue::String(arg)) => Some(arg.clone()),
+        _ => None,
+    };
+    let message = match (err.kind(), invalid) {
+        (ErrorKind::UnknownArgument, Some(arg)) if arg.starts_with("--") => {
+            format!("unrecognized option '{arg}'")
+        }
+        (ErrorKind::UnknownArgument, Some(arg)) if arg.starts_with('-') => {
+            format!("invalid option -- '{}'", &arg[1..])
+        }
+        _ => {
+            let text = err.render().to_string();
+            let first = text.lines().next().unwrap_or_default();
+            first.strip_prefix("error: ").unwrap_or(first).to_string()
+        }
+    };
+    eprintln!("scat: {}", render::sanitize_str(&message));
+    eprintln!("Try 'scat --help' for more information.");
+    std::process::exit(1);
 }
 
 fn run(cli: &Cli) -> i32 {

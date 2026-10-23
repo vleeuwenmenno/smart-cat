@@ -30,6 +30,7 @@ Run `make check` before handing work back.
 | `src/main.rs` | entry point and dispatch of info commands |
 | `src/cli.rs` | clap definition; GNU cat flags plus scat flags |
 | `src/cat.rs` | byte-exact GNU cat behaviour (`-n -b -s -E -T -v`) |
+| `src/fastcopy.rs` | plain copy inside the kernel (`copy_file_range`, `sendfile`, `splice`) with a read/write fallback |
 | `src/render.rs` | per-file dispatch, text rendering, control-character sanitizing |
 | `src/highlight.rs` | syntect + two-face (bat's syntaxes and themes), colour reduction |
 | `src/audio.rs` + `src/waveform.rs` | audio info view (lofty tags, symphonia peaks, braille/ASCII waveform) |
@@ -49,6 +50,7 @@ Run `make check` before handing work back.
 | `src/diagnose.rs` | `--diagnose` report |
 | `src/update.rs` | `--update` / `--check-update` from GitHub releases |
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
+| `tests/script_compat.rs` | shell idioms (`sh -c`, `bash -c`) run with GNU cat and scat: output, status, messages |
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
 | `tests/images.rs` | forced image output, captions, piped image bytes |
 | `tests/pdf.rs` | PDF view with hand-written PDFs: header, pages, text, piped bytes, malformed files |

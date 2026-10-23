@@ -241,7 +241,8 @@ fn pages_beyond_the_end_and_invalid_specs() {
     );
 
     let out = run(&["--pages", "3-1", "doc.pdf"], &dir);
-    assert_eq!(out.status.code(), Some(2));
+    // Usage errors exit 1, like GNU cat's.
+    assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("backwards range"));
 }
 

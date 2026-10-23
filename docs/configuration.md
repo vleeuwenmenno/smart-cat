@@ -106,7 +106,7 @@ renderer = "raw"                        # print exactly like cat
 |---|---|
 | `ext` | file name ending, case-insensitive; compound extensions work (`"tar.gz"`) |
 | `name` | exact file name, e.g. `"Makefile"` |
-| `mime` | detected type, with wildcards: `"text/*"`, `"image/png"`, `"*"` |
+| `mime` | detected type, with wildcards: `"text/*"`, `"image/png"`, `"*"` (or `"*/*"`, everything) |
 
 Settings a rule can change:
 

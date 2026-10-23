@@ -12,11 +12,19 @@ use crate::config::{ColorWhen, PagingMode, Protocol};
     name = "scat",
     version,
     max_term_width = 100,
-    args_override_self = true
+    args_override_self = true,
+    infer_long_args = true
 )]
 pub struct Cli {
     /// Files to print. With no FILE, or when FILE is -, read standard input.
-    #[arg(value_name = "FILE")]
+    // An empty name is accepted, as with cat, and then fails as a missing file.
+    #[arg(
+        value_name = "FILE",
+        value_parser = clap::builder::TypedValueParser::map(
+            clap::builder::OsStringValueParser::new(),
+            PathBuf::from
+        )
+    )]
     pub files: Vec<PathBuf>,
 
     /// Equivalent to -vET

@@ -370,6 +370,7 @@ impl Matcher {
 /// `image/*` style matching; `*` alone matches everything.
 fn mime_matches(pattern: &str, mime: &str) -> bool {
     match pattern.strip_suffix("/*") {
+        Some("*") => true,
         Some(prefix) => mime.split('/').next() == Some(prefix),
         None => pattern == "*" || pattern.eq_ignore_ascii_case(mime),
     }
@@ -585,6 +586,20 @@ mod tests {
         assert_eq!(config.pdf.pages.to_string(), "1-3,7");
         assert_eq!(config.pdf.max_pages, 20);
         assert!(toml::from_str::<Config>("[pdf]\npages = \"0\"").is_err());
+    }
+
+    #[test]
+    fn mime_wildcards() {
+        for pattern in ["*", "*/*"] {
+            assert!(mime_matches(pattern, "text/plain"), "{pattern}");
+            assert!(
+                mime_matches(pattern, "application/octet-stream"),
+                "{pattern}"
+            );
+        }
+        assert!(mime_matches("text/*", "text/x-rust"));
+        assert!(!mime_matches("text/*", "image/png"));
+        assert!(mime_matches("IMAGE/PNG", "image/png"));
     }
 
     #[test]

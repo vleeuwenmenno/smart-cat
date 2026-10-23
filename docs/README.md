@@ -3,6 +3,7 @@
 | Page | What it covers |
 |---|---|
 | [cat-compatibility.md](cat-compatibility.md) | flags, stdin, exit codes, when scat behaves exactly like cat |
+| [using-as-cat.md](using-as-cat.md) | replacing `cat` with scat: alias, fish function or symlink, what changes, a strict config |
 | [rendering.md](rendering.md) | what happens when output is a terminal: text, binary files, escape sequences |
 | [paging.md](paging.md) | long output through `less`, file headers for several files |
 | [audio.md](audio.md) | audio files: tag table, waveform, `--play` with mpv |
