@@ -27,6 +27,7 @@ mod pdf;
 mod play;
 mod render;
 mod sqlite;
+mod subtitles;
 mod table;
 mod term;
 mod update;

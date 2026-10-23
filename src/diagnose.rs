@@ -370,6 +370,7 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
                 | Renderer::Document
                 | Renderer::Certificate
                 | Renderer::Database
+                | Renderer::Subtitles
         )
         && !(settings.renderer == Renderer::Auto
             && (is_image || is_pdf || is_archive || is_office || is_cert || is_database))

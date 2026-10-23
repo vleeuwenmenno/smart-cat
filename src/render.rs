@@ -25,6 +25,7 @@ use crate::markdown;
 use crate::notebook;
 use crate::office;
 use crate::pager;
+use crate::subtitles;
 use crate::table;
 use crate::term::{self, ColorDepth, query};
 use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
@@ -368,6 +369,19 @@ fn process<W: Write>(
         Renderer::Database => render_sqlite(&mut input, out, ctx, source),
         Renderer::Auto if matches!(source, Source::Path(_)) && crate::sqlite::wants(&head) => {
             render_sqlite(&mut input, out, ctx, source)
+        }
+        Renderer::Subtitles => {
+            render_subtitles(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
+        }
+        Renderer::Auto
+            if subtitles::wants(
+                file_name.as_deref(),
+                ctx.cli.language.as_deref().or(settings.language.as_deref()),
+                &head,
+            )
+            .is_some() =>
+        {
+            render_subtitles(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
         }
         Renderer::Image => render_image(&mut input, out, ctx, source, &head),
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
@@ -1183,6 +1197,59 @@ fn render_sqlite<W: Write>(
     let mut buf = Vec::new();
     crate::sqlite::render(&mut buf, source, input, &opts)?;
     out.write_all(&buf)
+}
+
+/// Subtitle view. The file is read up to a cap; a file that does not parse falls back
+/// to the text view (or a hex dump for binary content) with a note on stderr.
+fn render_subtitles<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+    head: &[u8],
+) -> io::Result<()> {
+    let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+    let format = subtitles::wants(file_name, language, head)
+        .or_else(|| file_name.and_then(|n| subtitles::wants(Some(n), None, head)))
+        .unwrap_or(subtitles::Format::Srt);
+    let mut data = Vec::new();
+    (&mut input.reader)
+        .take(subtitles::MAX_READ_BYTES + 1)
+        .read_to_end(&mut data)?;
+    let truncated = data.len() as u64 > subtitles::MAX_READ_BYTES;
+    data.truncate(subtitles::MAX_READ_BYTES as usize);
+    let name = file_name.unwrap_or("-").to_string();
+    let cli = ctx.cli;
+    let opts = subtitles::Options {
+        name: &name,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        max_cues: ctx.config.subtitles.max_cues,
+        line_numbers: !cli.plain && (cli.number || cli.number_nonblank || settings.line_numbers),
+    };
+    match subtitles::render(out, format, &data, truncated, file_name, &opts) {
+        Ok(()) => return Ok(()),
+        Err(subtitles::Failure::Io(err)) => return Err(err),
+        Err(subtitles::Failure::Invalid(reason)) => {
+            crate::report!("{name}: not a valid subtitle file ({reason}); showing it as text");
+        }
+    }
+    let binary = detect::detect(&data[..data.len().min(SNIFF_BYTES)]).kind == Kind::Binary
+        && !data.starts_with(b"\xFF\xFE")
+        && !data.starts_with(b"\xFE\xFF");
+    let rest = if truncated {
+        std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())))
+    } else {
+        BufReader::new(Box::new(io::empty()) as Box<dyn Read>)
+    };
+    input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+    if binary {
+        render_hex(input, out, ctx)
+    } else {
+        let head = sniff(input)?;
+        render_text(input, out, ctx, settings, file_name, &head)
+    }
 }
 
 fn render_text<W: Write>(

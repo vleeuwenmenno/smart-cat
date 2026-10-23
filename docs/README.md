@@ -18,6 +18,7 @@
 | [certificates-and-keys.md](certificates-and-keys.md) | X.509 certificates, CSRs, public keys, SSH key files; private keys with their material hidden |
 | [notebooks.md](notebooks.md) | Jupyter notebooks: cells, outputs, tracebacks and inline images |
 | [sqlite.md](sqlite.md) | SQLite databases: header facts, tables, schemas, sample rows, read-only safety |
+| [subtitles.md](subtitles.md) | `.srt` `.vtt` `.ass` `.ssa`: overview with warnings, cue list, tag stripping, encodings |
 | [compressed-files.md](compressed-files.md) | transparent `.gz` `.xz` `.zst` `.bz2`: inner type detection, tarballs, size cap |
 | [diffs-and-logs.md](diffs-and-logs.md) | coloured unified diffs and log files: levels, timestamps, streaming |
 | [images.md](images.md) | images in the terminal: kitty, sixel, block and ASCII output, sizing, animation, SVG |

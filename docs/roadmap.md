@@ -29,6 +29,7 @@ Background and library choices are in [research.md](research.md).
   - [office documents](office-documents.md): docx, odt, pptx, odp, xlsx, xls, ods as markdown, with slide and sheet sections
   - [SQLite databases](sqlite.md): header, tables with row counts, schemas, indexes and sample rows, opened read-only and immutable
   - [Jupyter notebooks](notebooks.md): markdown and code cells, text, error and image outputs
+  - [subtitles](subtitles.md): srt, vtt, ass and ssa with an overview (span, language, overlap and reading-speed warnings) and the cue list
   - CSV/TSV/PSV tables and minified JSON pretty-printing ([data-files.md](data-files.md))
   - transparent `.gz/.xz/.zst/.bz2` decompression ([compressed-files.md](compressed-files.md))
   - diff and log colouring ([diffs-and-logs.md](diffs-and-logs.md))
