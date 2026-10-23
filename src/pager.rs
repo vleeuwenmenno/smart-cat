@@ -127,7 +127,8 @@ pub fn renderer_is_pageable(
         | Renderer::Binary
         | Renderer::Archive
         | Renderer::Document
-        | Renderer::Certificate => true,
+        | Renderer::Certificate
+        | Renderer::Subtitles => true,
         Renderer::Auto => {
             if is_image || is_audio {
                 return false;

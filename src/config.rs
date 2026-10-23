@@ -57,6 +57,8 @@ pub enum Renderer {
     Certificate,
     /// SQLite database: header facts, tables, schemas and sample rows.
     Database,
+    /// Subtitle files (srt, vtt, ass, ssa): overview and cue list.
+    Subtitles,
 }
 
 impl fmt::Display for Renderer {
@@ -80,6 +82,7 @@ impl fmt::Display for Renderer {
             Renderer::Document => "document",
             Renderer::Certificate => "cert",
             Renderer::Database => "database",
+            Renderer::Subtitles => "subtitles",
         })
     }
 }
@@ -214,6 +217,7 @@ pub struct Config {
     pub archive: ArchiveConfig,
     pub office: OfficeConfig,
     pub sqlite: SqliteConfig,
+    pub subtitles: SubtitlesConfig,
     pub cat_mode: CatModeConfig,
 }
 
@@ -328,6 +332,19 @@ impl Default for SqliteConfig {
             sample_rows: 10,
             max_tables: 20,
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SubtitlesConfig {
+    /// Cues shown; later ones are only counted.
+    pub max_cues: usize,
+}
+
+impl Default for SubtitlesConfig {
+    fn default() -> Self {
+        Self { max_cues: 500 }
     }
 }
 

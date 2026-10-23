@@ -132,6 +132,11 @@ sample_rows = 10
 # Tables shown in detail after the overview (0 shows the overview only).
 max_tables = 20
 
+[subtitles]
+# Subtitle files (srt, vtt, ass, ssa) show an overview, then the cues.
+# Cues shown; later ones are only counted.
+max_cues = 500
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -147,7 +152,8 @@ channel = "stable"
 #   "archive" (summary and file tree),
 #   "document" (docx, pptx, xlsx, odt, ... as markdown),
 #   "cert" (certificate and key summaries; private keys hidden),
-#   "database" (SQLite tables and rows), "raw" (exactly cat)
+#   "database" (SQLite tables and rows),
+#   "subtitles" (srt, vtt, ass, ssa overview and cues), "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }
