@@ -32,7 +32,11 @@ scat /usr/bin/ls            # ELF/PE/Mach-O/wasm summary: libraries, symbols, se
 scat release.tar.gz         # summary and file tree of zip, tar, deb, 7z
 scat report.docx            # Word, PowerPoint, Excel and OpenDocument files as markdown and tables
 scat fullchain.pem          # certificate summaries and expiry; private keys stay hidden
+scat analysis.ipynb         # Jupyter notebook: cells, outputs and inline plots
+scat movie.en.srt          # subtitles: overview with warnings, then the cues (also vtt, ass)
 scat app.db                 # SQLite: tables, schemas, sample rows (opened read-only)
+scat flow.mmd               # mermaid, graphviz (.dot) and PlantUML diagrams drawn as images
+scat Inter.woff2            # font info (axes, coverage, features) and a rendered specimen
 scat app.log.gz             # decompressed, log levels coloured (diffs too: scat x.patch)
 scat file.txt | grep foo    # piped: identical to cat
 scat --diagnose             # what scat detected about your terminal

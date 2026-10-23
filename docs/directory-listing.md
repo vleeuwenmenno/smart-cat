@@ -56,6 +56,7 @@ Each tile is a box of `tile_width` x `tile_height` cells (default 16x8; `--tile-
 | video (mp4, mkv, webm, mov, avi, ...) | a frame 2 s in, from `ffmpeg` (the first frame for shorter clips) |
 | PDF | the first page, rendered by the same sandboxed helper as the [PDF view](pdf.md) |
 | audio (mp3, flac, ogg, opus, m4a, ...) | the embedded cover art |
+| fonts (ttf, otf, ttc, otc, woff, woff2) | a big `Aa` set in the font (a character of its main script when it has no Latin), drawn by the sandboxed [font helper](fonts.md) |
 
 Files are recognised by extension, so listing a large directory does not read every file. Everything else gets an icon, and so does any file whose thumbnail cannot be made (no cover art, a broken image, no `ffmpeg`).
 

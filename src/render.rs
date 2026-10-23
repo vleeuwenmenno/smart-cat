@@ -13,6 +13,7 @@ use crate::cli::Cli;
 use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, PagingMode, Renderer};
 use crate::decompress;
 use crate::detect::{self, Kind, SNIFF_BYTES};
+use crate::diagram;
 use crate::fastcopy;
 use crate::header;
 use crate::hexdump;
@@ -22,8 +23,10 @@ use crate::json;
 use crate::linestyle;
 use crate::listing;
 use crate::markdown;
+use crate::notebook;
 use crate::office;
 use crate::pager;
+use crate::subtitles;
 use crate::table;
 use crate::term::{self, ColorDepth, query};
 use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
@@ -186,6 +189,12 @@ fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     let settings = ctx
         .config
         .settings_for(file_name.as_deref(), &detected.mime);
+    // A font's specimen is an image; only the table alone can be paged.
+    if settings.renderer == Renderer::Font
+        || (settings.renderer == Renderer::Auto && crate::font::wants(&head))
+    {
+        return font_screen(ctx).is_none();
+    }
     let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
     let as_markdown = match settings.renderer {
         Renderer::Markdown => true,
@@ -194,6 +203,22 @@ fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     };
     // Markdown may draw inline images, and graphics escapes must never reach a pager.
     if as_markdown && markdown_has_images(path) {
+        return false;
+    }
+    // Notebooks draw image outputs; the same holds for a pager.
+    let as_notebook = match settings.renderer {
+        Renderer::Notebook => true,
+        Renderer::Auto => notebook::is_notebook(file_name.as_deref(), language),
+        _ => false,
+    };
+    if as_notebook && notebook_has_images(path) {
+        return false;
+    }
+    // Diagrams are drawn as images.
+    if settings.renderer == Renderer::Auto
+        && detected.kind == Kind::Text
+        && diagram::detect(file_name.as_deref(), language).is_some()
+    {
         return false;
     }
     pager::renderer_is_pageable(
@@ -205,11 +230,21 @@ fn source_pageable(source: &Source, ctx: &mut Context) -> bool {
     )
 }
 
-/// Whether a markdown file references an image (`![`), read up to 4 MiB.
+/// Whether a markdown file references an image (`![`) or has a fenced diagram block,
+/// read up to 4 MiB.
 fn markdown_has_images(path: &std::path::Path) -> bool {
     let mut text = Vec::new();
     let read = std::fs::File::open(path).and_then(|f| f.take(4 << 20).read_to_end(&mut text));
-    read.is_err() || text.windows(2).any(|w| w == b"![")
+    read.is_err() || text.windows(2).any(|w| w == b"![") || diagram::markdown_has_diagrams(&text)
+}
+
+/// Whether a notebook may draw images (an image output or attachment), read up to
+/// the notebook size limit.
+fn notebook_has_images(path: &std::path::Path) -> bool {
+    let mut data = Vec::new();
+    let read = std::fs::File::open(path)
+        .and_then(|f| f.take(notebook::MAX_BYTES + 1).read_to_end(&mut data));
+    read.is_err() || notebook::may_draw_images(&data)
 }
 
 /// The rule before a file when several are rendered, with a blank line between files.
@@ -350,6 +385,21 @@ fn process<W: Write>(
         Renderer::Auto if matches!(source, Source::Path(_)) && crate::sqlite::wants(&head) => {
             render_sqlite(&mut input, out, ctx, source)
         }
+        Renderer::Subtitles => {
+            render_subtitles(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
+        }
+        Renderer::Auto
+            if subtitles::wants(
+                file_name.as_deref(),
+                ctx.cli.language.as_deref().or(settings.language.as_deref()),
+                &head,
+            )
+            .is_some() =>
+        {
+            render_subtitles(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
+        }
+        Renderer::Font => render_font(&mut input, out, ctx, source),
+        Renderer::Auto if crate::font::wants(&head) => render_font(&mut input, out, ctx, source),
         Renderer::Image => render_image(&mut input, out, ctx, source, &head),
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
@@ -357,6 +407,27 @@ fn process<W: Write>(
         Renderer::Certificate => render_cert(&mut input, out, ctx, &settings, file_name.as_deref()),
         Renderer::Auto if crate::cert::wants(file_name.as_deref(), &head) => {
             render_cert(&mut input, out, ctx, &settings, file_name.as_deref())
+        }
+        Renderer::Diagram => render_diagram(
+            &mut input,
+            out,
+            ctx,
+            &settings,
+            file_name.as_deref(),
+            source,
+        ),
+        Renderer::Auto
+            if detected.kind == Kind::Text
+                && diagram::detect(file_name.as_deref(), language).is_some() =>
+        {
+            render_diagram(
+                &mut input,
+                out,
+                ctx,
+                &settings,
+                file_name.as_deref(),
+                source,
+            )
         }
         Renderer::Table => render_table(
             &mut input,
@@ -388,6 +459,12 @@ fn process<W: Write>(
                 hide_private_keys(&mut input);
             }
             render_hex(&mut input, out, ctx)
+        }
+        Renderer::Notebook => {
+            render_notebook(&mut input, out, ctx, &settings, file_name.as_deref())
+        }
+        Renderer::Auto if notebook::is_notebook(file_name.as_deref(), language) => {
+            render_notebook(&mut input, out, ctx, &settings, file_name.as_deref())
         }
         _ if as_markdown => {
             let doc = (&settings, file_name.as_deref(), source);
@@ -685,38 +762,7 @@ fn render_markdown<W: Write>(
     // Both callbacks need the context; they never run at the same time.
     let ctx = std::cell::RefCell::new(ctx);
     let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
-        let mut guard = ctx.borrow_mut();
-        let ctx: &mut Context = &mut guard;
-        let theme_name = ctx.theme_name(settings);
-        let assets = ctx.assets.get_or_insert_with(Assets::load);
-        let syntax = assets.find_syntax(Some(lang), None, "")?;
-        let theme = assets
-            .theme(&theme_name)
-            .or_else(|| assets.theme(&ctx.config.defaults.theme_dark))?;
-        let mut highlighter = HighlightLines::new(syntax, theme);
-        let mut lines = Vec::new();
-        for line in syntect::util::LinesWithEndings::from(code) {
-            let regions = highlighter.highlight_line(line, &assets.syntaxes).ok()?;
-            let mut encoded = Vec::with_capacity(line.len() * 2);
-            let mut column = 0;
-            for (style, piece) in regions {
-                let piece = piece.trim_end_matches(['\n', '\r']);
-                if piece.is_empty() {
-                    continue;
-                }
-                encoded.extend_from_slice(highlight::style_sgr(style, ctx.depth).as_bytes());
-                sanitize(
-                    &mut encoded,
-                    piece.as_bytes(),
-                    SgrMode::Escape,
-                    settings.tab_width,
-                    &mut column,
-                );
-            }
-            encoded.extend_from_slice(RESET);
-            lines.push(encoded);
-        }
-        Some(lines)
+        highlight_block(&mut ctx.borrow_mut(), settings, lang, code)
     };
     // Image paths are relative to the document's directory; standard input has none,
     // so its images keep their placeholders.
@@ -729,8 +775,177 @@ fn render_markdown<W: Write>(
         let screen = ctx.borrow_mut().image_screen();
         markdown_image(&screen, &path, max_cols)
     };
-    let rendered = markdown::render_with_images(&text, &opts, &mut highlight, &mut images);
+    let name = source.display_name();
+    let mut diagrams = |lang: &str, code: &str, max_cols: u16| {
+        let kind = diagram::fence_kind(lang)?;
+        let mut ctx = ctx.borrow_mut();
+        if !ctx.colors {
+            return None;
+        }
+        let screen = ctx.image_screen();
+        drop(ctx);
+        if screen.method == crate::image::Method::Ascii {
+            return None;
+        }
+        let limits = (Some(max_cols), Some(MARKDOWN_DIAGRAM_ROWS));
+        match draw_diagram(&screen, kind, code, limits) {
+            Ok((drawn, _)) => Some((drawn, format!("{} diagram", kind.name()))),
+            Err(message) => {
+                crate::report!(
+                    "{name}: cannot draw {} diagram: {}",
+                    kind.name(),
+                    sanitize_str(&message)
+                );
+                None
+            }
+        }
+    };
+    let rendered = markdown::render_with_diagrams(
+        &text,
+        &opts,
+        &mut highlight,
+        &mut images,
+        Some(&mut diagrams),
+    );
     out.write_all(&rendered)
+}
+
+/// Highlights a code block with the theme of `settings`: one encoded line per source
+/// line, without newlines. `None` when the language or theme is unknown.
+fn highlight_block(
+    ctx: &mut Context,
+    settings: &FileSettings,
+    lang: &str,
+    code: &str,
+) -> Option<Vec<Vec<u8>>> {
+    let theme_name = ctx.theme_name(settings);
+    let assets = ctx.assets.get_or_insert_with(Assets::load);
+    let syntax = assets.find_syntax(Some(lang), None, "")?;
+    let theme = assets
+        .theme(&theme_name)
+        .or_else(|| assets.theme(&ctx.config.defaults.theme_dark))?;
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let mut lines = Vec::new();
+    for line in syntect::util::LinesWithEndings::from(code) {
+        let regions = highlighter.highlight_line(line, &assets.syntaxes).ok()?;
+        let mut encoded = Vec::with_capacity(line.len() * 2);
+        let mut column = 0;
+        for (style, piece) in regions {
+            let piece = piece.trim_end_matches(['\n', '\r']);
+            if piece.is_empty() {
+                continue;
+            }
+            encoded.extend_from_slice(highlight::style_sgr(style, ctx.depth).as_bytes());
+            sanitize(
+                &mut encoded,
+                piece.as_bytes(),
+                SgrMode::Escape,
+                settings.tab_width,
+                &mut column,
+            );
+        }
+        encoded.extend_from_slice(RESET);
+        lines.push(encoded);
+    }
+    Some(lines)
+}
+
+/// Jupyter notebooks: cells in order with their outputs. Notebooks over the size limit
+/// and files that are not nbformat 4 fall back to the highlighted JSON view.
+fn render_notebook<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+) -> io::Result<()> {
+    let mut data = Vec::new();
+    (&mut input.reader)
+        .take(notebook::MAX_BYTES + 1)
+        .read_to_end(&mut data)?;
+    let name = file_name.unwrap_or("-").to_string();
+    let parsed = if data.len() as u64 > notebook::MAX_BYTES {
+        Err(format!("larger than {}", human_size(notebook::MAX_BYTES)))
+    } else {
+        notebook::parse(&data)
+    };
+    let nb = match parsed {
+        Ok(nb) => nb,
+        Err(reason) => {
+            crate::report!("{name}: not a readable notebook ({reason}); showing JSON");
+            let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+            input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+            let head = sniff(input)?;
+            return render_text(input, out, ctx, settings, Some("notebook.json"), &head);
+        }
+    };
+    let has_code_spans = data.contains(&b'`');
+    drop(data);
+
+    let sgr_mode = match (ctx.config.defaults.ansi, ctx.colors) {
+        (AnsiMode::Escape, _) => SgrMode::Escape,
+        (AnsiMode::KeepSgr, true) => SgrMode::Keep,
+        (AnsiMode::KeepSgr, false) => SgrMode::Strip,
+    };
+    let opts = notebook::Options {
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        width: markdown::render_width(ctx.stdout_tty),
+        tab_width: settings.tab_width,
+        plain: ctx.cli.plain,
+    };
+    let md_opts = markdown_options(ctx, settings, if has_code_spans { "`" } else { "" });
+    let tab_width = settings.tab_width;
+    let ctx = std::cell::RefCell::new(ctx);
+    let mut markdown_hook = |text: &str, images: notebook::MarkdownImages| -> Vec<u8> {
+        let mut highlight =
+            |lang: &str, code: &str| highlight_block(&mut ctx.borrow_mut(), settings, lang, code);
+        markdown::render_with_images(text, &md_opts, &mut highlight, images)
+    };
+    let mut highlight =
+        |lang: &str, code: &str| highlight_block(&mut ctx.borrow_mut(), settings, lang, code);
+    let mut image = |data: Vec<u8>, svg: bool, cols: u16| {
+        let screen = ctx.borrow_mut().image_screen();
+        notebook_image(&screen, data, svg, cols)
+    };
+    let mut clean = |line: &str| {
+        let mut encoded = Vec::with_capacity(line.len());
+        let mut column = 0;
+        sanitize(
+            &mut encoded,
+            line.as_bytes(),
+            sgr_mode,
+            tab_width,
+            &mut column,
+        );
+        encoded
+    };
+    let mut hooks = notebook::Hooks {
+        markdown: &mut markdown_hook,
+        highlight: &mut highlight,
+        image: &mut image,
+        clean: &mut clean,
+    };
+    out.write_all(&notebook::render(&nb, &opts, &mut hooks))
+}
+
+/// Draws a notebook image output with kitty, sixel or blocks. ASCII output and
+/// decoding errors keep the placeholder.
+fn notebook_image(
+    screen: &crate::image::Screen,
+    data: Vec<u8>,
+    svg: bool,
+    max_cols: u16,
+) -> Option<crate::image::Drawn> {
+    if screen.method == crate::image::Method::Ascii {
+        return None;
+    }
+    let opts = crate::image::ShowOptions {
+        max_cols: Some(max_cols),
+        max_rows: Some(notebook::IMAGE_ROWS),
+        ..Default::default()
+    };
+    crate::image::draw_encoded(screen, data, svg, &opts).ok()
 }
 
 /// Only inline code uses the light/dark palette; code blocks ask for a theme
@@ -790,6 +1005,8 @@ fn render_document<W: Write>(
 
 /// Markdown images are at most this many rows high.
 const MARKDOWN_IMAGE_ROWS: u16 = 15;
+/// Diagrams in markdown documents are at most this many rows high.
+const MARKDOWN_DIAGRAM_ROWS: u16 = 20;
 /// Larger image files in markdown documents are left as placeholders.
 const MARKDOWN_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -996,6 +1213,91 @@ fn render_image<W: Write>(
     crate::image::view(input, out, &screen, &options)
 }
 
+/// Mermaid, graphviz and PlantUML sources drawn as an image with a caption. Shown as
+/// highlighted source when images cannot be drawn (ASCII output, or `-f` into a pipe
+/// without `--protocol`), and after a short note when drawing fails.
+fn render_diagram<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+    source: &Source,
+) -> io::Result<()> {
+    let mut data = Vec::new();
+    (&mut input.reader)
+        .take(diagram::MAX_SOURCE_BYTES + 1)
+        .read_to_end(&mut data)?;
+    let fits = data.len() as u64 <= diagram::MAX_SOURCE_BYTES;
+    let want_images = fits && (ctx.stdout_tty || ctx.cli.protocol.is_some());
+    if want_images {
+        let text = String::from_utf8_lossy(&data);
+        let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+        let kind = diagram::detect(file_name, language).or_else(|| diagram::sniff(&text));
+        let screen = ctx.image_screen();
+        let name = source.display_name();
+        match kind {
+            _ if screen.method == crate::image::Method::Ascii => {}
+            Some(kind) => match draw_diagram(&screen, kind, &text, (None, None)) {
+                Ok((drawn, engine)) => {
+                    drawn.write(out)?;
+                    if !ctx.cli.plain {
+                        let caption = format!(
+                            "{}  {} diagram ({})",
+                            sanitize_str(&name),
+                            kind.name(),
+                            engine.name()
+                        );
+                        if ctx.colors {
+                            writeln!(out, "\x1b[2m{caption}\x1b[22m")?;
+                        } else {
+                            writeln!(out, "{caption}")?;
+                        }
+                    }
+                    return Ok(());
+                }
+                Err(message) => {
+                    out.flush()?;
+                    crate::report!(
+                        "{name}: cannot draw {} diagram: {}; showing the source",
+                        kind.name(),
+                        sanitize_str(&message)
+                    );
+                }
+            },
+            None => {
+                out.flush()?;
+                crate::report!(
+                    "{name}: not a mermaid, graphviz or PlantUML diagram; showing the source"
+                );
+            }
+        }
+    }
+    let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+    input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+    let head = sniff(input)?;
+    render_text(input, out, ctx, settings, file_name, &head)
+}
+
+/// Renders a diagram to SVG and encodes it for `screen` within `(max_cols, max_rows)`.
+/// Errors are short messages.
+fn draw_diagram(
+    screen: &crate::image::Screen,
+    kind: diagram::Kind,
+    text: &str,
+    (max_cols, max_rows): (Option<u16>, Option<u16>),
+) -> Result<(crate::image::Drawn, diagram::Engine), String> {
+    let svg = diagram::render(kind, text).map_err(|failure| failure.to_string())?;
+    let opts = crate::image::ShowOptions {
+        max_cols,
+        max_rows,
+        ..Default::default()
+    };
+    let drawn = crate::image::draw_encoded(screen, svg.data, true, &opts)
+        .map_err(|err| format!("{}: cannot draw the SVG: {err}", svg.engine.name()))?;
+    Ok((drawn, svg.engine))
+}
+
 /// PDF view. Pages are drawn as images on a terminal; their text is shown with
 /// `--text`, when only ASCII art is possible, and for `-f` into a pipe (unless
 /// `--protocol` asks for images).
@@ -1057,6 +1359,32 @@ fn render_archive<W: Write>(
     archive::render(out, format, &name, source, &opts)
 }
 
+/// Where a font specimen is drawn: on a terminal, or with `--protocol` into a pipe;
+/// never as ASCII art. `None` means the info table alone.
+fn font_screen(ctx: &mut Context) -> Option<crate::image::Screen> {
+    if !ctx.stdout_tty && ctx.cli.protocol.is_none() {
+        return None;
+    }
+    Some(ctx.image_screen()).filter(|s| s.method != crate::image::Method::Ascii)
+}
+
+/// Font view: info table per face, then the specimen when images can be drawn.
+fn render_font<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    source: &Source,
+) -> io::Result<()> {
+    let name = source.display_name();
+    let opts = crate::font::Options {
+        name: &name,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        screen: font_screen(ctx),
+    };
+    crate::font::render(out, input, &opts)
+}
+
 /// SQLite database view; only regular files, SQLite needs to open the path itself.
 fn render_sqlite<W: Write>(
     input: &mut Input,
@@ -1077,6 +1405,59 @@ fn render_sqlite<W: Write>(
     let mut buf = Vec::new();
     crate::sqlite::render(&mut buf, source, input, &opts)?;
     out.write_all(&buf)
+}
+
+/// Subtitle view. The file is read up to a cap; a file that does not parse falls back
+/// to the text view (or a hex dump for binary content) with a note on stderr.
+fn render_subtitles<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+    head: &[u8],
+) -> io::Result<()> {
+    let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+    let format = subtitles::wants(file_name, language, head)
+        .or_else(|| file_name.and_then(|n| subtitles::wants(Some(n), None, head)))
+        .unwrap_or(subtitles::Format::Srt);
+    let mut data = Vec::new();
+    (&mut input.reader)
+        .take(subtitles::MAX_READ_BYTES + 1)
+        .read_to_end(&mut data)?;
+    let truncated = data.len() as u64 > subtitles::MAX_READ_BYTES;
+    data.truncate(subtitles::MAX_READ_BYTES as usize);
+    let name = file_name.unwrap_or("-").to_string();
+    let cli = ctx.cli;
+    let opts = subtitles::Options {
+        name: &name,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        max_cues: ctx.config.subtitles.max_cues,
+        line_numbers: !cli.plain && (cli.number || cli.number_nonblank || settings.line_numbers),
+    };
+    match subtitles::render(out, format, &data, truncated, file_name, &opts) {
+        Ok(()) => return Ok(()),
+        Err(subtitles::Failure::Io(err)) => return Err(err),
+        Err(subtitles::Failure::Invalid(reason)) => {
+            crate::report!("{name}: not a valid subtitle file ({reason}); showing it as text");
+        }
+    }
+    let binary = detect::detect(&data[..data.len().min(SNIFF_BYTES)]).kind == Kind::Binary
+        && !data.starts_with(b"\xFF\xFE")
+        && !data.starts_with(b"\xFE\xFF");
+    let rest = if truncated {
+        std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())))
+    } else {
+        BufReader::new(Box::new(io::empty()) as Box<dyn Read>)
+    };
+    input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+    if binary {
+        render_hex(input, out, ctx)
+    } else {
+        let head = sniff(input)?;
+        render_text(input, out, ctx, settings, file_name, &head)
+    }
 }
 
 fn render_text<W: Write>(

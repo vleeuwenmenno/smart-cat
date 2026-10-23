@@ -115,6 +115,14 @@ Messages say `cat:` either way. Explicit scat flags still work under the name `c
 
 See [sqlite.md](sqlite.md).
 
+## `[subtitles]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_cues` | `500` | cues listed; later ones are counted in the overview and shown as `… N more cues` |
+
+See [subtitles.md](subtitles.md).
+
 ## `[update]`
 
 | Key | Default | Meaning |
@@ -155,7 +163,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"binary"` ([executable and library summary](binaries.md)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"archive"` (summary and file tree, see [archives.md](archives.md)), `"document"` (docx, pptx, xlsx, odt, ... as markdown, see [office-documents.md](office-documents.md)), `"cert"` (certificate and key summaries, private keys hidden, see [certificates-and-keys.md](certificates-and-keys.md)), `"database"` (SQLite tables and rows, see [sqlite.md](sqlite.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"binary"` ([executable and library summary](binaries.md)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"archive"` (summary and file tree, see [archives.md](archives.md)), `"document"` (docx, pptx, xlsx, odt, ... as markdown, see [office-documents.md](office-documents.md)), `"cert"` (certificate and key summaries, private keys hidden, see [certificates-and-keys.md](certificates-and-keys.md)), `"database"` (SQLite tables and rows, see [sqlite.md](sqlite.md)), `"notebook"` (Jupyter notebooks, see [notebooks.md](notebooks.md)), `"subtitles"` (srt, vtt, ass, ssa overview and cues, see [subtitles.md](subtitles.md)), `"diagram"` (mermaid, graphviz or PlantUML drawn as an image, see [diagrams.md](diagrams.md)), `"font"` (font info and specimen, see [fonts.md](fonts.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |

@@ -8,7 +8,9 @@ mod config;
 mod decompress;
 mod detect;
 mod diagnose;
+mod diagram;
 mod fastcopy;
+mod font;
 mod generate;
 mod header;
 mod hexdump;
@@ -20,6 +22,7 @@ mod kv;
 mod linestyle;
 mod listing;
 mod markdown;
+mod notebook;
 mod office;
 mod pager;
 mod pdf;
@@ -27,6 +30,7 @@ mod play;
 mod render;
 mod sandbox;
 mod sqlite;
+mod subtitles;
 mod table;
 mod term;
 mod update;
@@ -51,6 +55,12 @@ fn main() {
         .or_else(archive::internal_main)
         .or_else(sqlite::internal_main)
     {
+        std::process::exit(code);
+    }
+    if let Some(code) = diagram::helper::internal_main() {
+        std::process::exit(code);
+    }
+    if let Some(code) = font::internal_main() {
         std::process::exit(code);
     }
 

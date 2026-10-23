@@ -200,6 +200,7 @@ fn open_svg(data: &[u8]) -> Result<Decoded, String> {
     if data.windows(5).any(|w| w == b"<text") {
         let mut fonts = usvg::fontdb::Database::new();
         fonts.load_system_fonts();
+        set_generic_families(&mut fonts);
         options.fontdb = Arc::new(fonts);
     }
     let tree = usvg::Tree::from_data(data, &options).map_err(|e| e.to_string())?;
@@ -211,6 +212,57 @@ fn open_svg(data: &[u8]) -> Result<Decoded, String> {
         width,
         height,
     })
+}
+
+/// Points the generic families (`serif`, `sans-serif`, `monospace`) at installed fonts.
+/// fontdb defaults them to Times New Roman, Arial and Courier New; without those (most
+/// Linux systems) text in `font-family="Times,serif"` (graphviz output) fell back to
+/// an arbitrary font, a symbol font on some systems.
+fn set_generic_families(fonts: &mut resvg::usvg::fontdb::Database) {
+    const SERIF: &[&str] = &[
+        "Times New Roman",
+        "Liberation Serif",
+        "DejaVu Serif",
+        "Noto Serif",
+        "Nimbus Roman",
+        "FreeSerif",
+    ];
+    const SANS: &[&str] = &[
+        "Arial",
+        "Liberation Sans",
+        "DejaVu Sans",
+        "Noto Sans",
+        "Nimbus Sans",
+        "FreeSans",
+    ];
+    const MONO: &[&str] = &[
+        "Courier New",
+        "Liberation Mono",
+        "DejaVu Sans Mono",
+        "Noto Sans Mono",
+        "Nimbus Mono PS",
+        "FreeMono",
+    ];
+    let installed = |names: &[&str]| -> Option<String> {
+        names
+            .iter()
+            .find(|name| {
+                fonts
+                    .faces()
+                    .any(|face| face.families.iter().any(|(family, _)| family == *name))
+            })
+            .map(|name| name.to_string())
+    };
+    let (serif, sans, mono) = (installed(SERIF), installed(SANS), installed(MONO));
+    if let Some(name) = serif {
+        fonts.set_serif_family(name);
+    }
+    if let Some(name) = sans {
+        fonts.set_sans_serif_family(name);
+    }
+    if let Some(name) = mono {
+        fonts.set_monospace_family(name);
+    }
 }
 
 /// Whether text looks like an SVG document: it starts with `<svg`, possibly after an
