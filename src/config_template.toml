@@ -1,0 +1,110 @@
+# scat configuration
+#
+# Location: $XDG_CONFIG_HOME/scat/config.toml (usually ~/.config/scat/config.toml).
+# Override with --config PATH or SCAT_CONFIG. Show the effective config with
+# `scat --print-config`, and how a file is handled with `scat --diagnose FILE`.
+#
+# Precedence: command line flags > SCAT_* environment variables > [[rule]] > [defaults].
+
+[defaults]
+# When to use colours: "auto", "always" or "never". NO_COLOR and CLICOLOR_FORCE are honoured.
+color = "auto"
+
+# Fixed theme for every file. Leave unset to pick theme_dark or theme_light from the
+# terminal's background colour. `scat --list-themes` shows the names.
+# theme = "Nord"
+theme_dark = "Monokai Extended"
+theme_light = "Monokai Extended Light"
+
+# Show a line number gutter when rendering to a terminal. `scat -p` hides it for one run.
+# Piped output never gets numbers unless -n is given, exactly like cat.
+line_numbers = true
+
+# Tabs are expanded to this many columns when rendering.
+tab_width = 4
+
+# Escape sequences already in a file: "keep-sgr" keeps colours, "escape" shows them as ^[.
+ansi = "keep-sgr"
+
+# Files larger than this are shown without syntax highlighting.
+max_highlight_bytes = 16777216
+
+# .gz, .xz, .zst and .bz2 files are decompressed when rendering. Output stops after this
+# many decompressed bytes (a guard against decompression bombs).
+max_decompressed_bytes = 1073741824
+
+# `scat` with no arguments, run from a terminal, lists the current directory. Set "stdin"
+# to read standard input like cat instead.
+no_args = "list"
+
+# A directory argument is listed when rendering. Set "error" for cat's "Is a directory".
+directories = "list"
+
+# Long text output goes through a pager when it does not fit the screen: "auto",
+# "always" or "never". The pager is $SCAT_PAGER, then $PAGER, then `less -RFX`.
+# Never used for images, media, or when output is piped. `scat --paging never` for one run.
+paging = "auto"
+
+# Show a rule with the file name before each file when you print several at once.
+# `scat -p` hides it for one run.
+headers = true
+
+[list]
+# "grid" (like ls) or "long" (one entry per line with size and age).
+style = "grid"
+
+# Show names starting with a dot. `scat --all` does this for one run.
+show_hidden = false
+
+[hexdump]
+# Binary files show a hex dump of this many leading bytes.
+max_bytes = 512
+
+[image]
+# How images are drawn: "auto" (best the terminal supports), "kitty", "sixel",
+# "blocks" (Unicode half blocks), "sextants" (2x3 Unicode blocks) or "ascii".
+protocol = "auto"
+
+# Maximum image height in terminal rows. Unset means the terminal height minus 4.
+# max_height = 30
+
+# Play animated GIF, WebP and PNG once (false shows the first frame only).
+animate = true
+
+[table]
+# CSV, TSV and PSV files are drawn as tables. Data rows shown before a "... more rows"
+# footer; 0 shows every row.
+max_rows = 200
+
+[pdf]
+# Pages shown when --pages is not given: "1", "1-3,7", "4-" or "all".
+pages = "1"
+
+# Most pages drawn as images per file (text output is not limited).
+max_pages = 20
+
+[update]
+# "stable" or "prerelease" (used by `scat --update`).
+channel = "stable"
+
+# Rules adjust settings per file. Every matching rule applies, in order, and later rules
+# override earlier ones. A match can use `ext`, `name` (exact file name) and `mime`
+# (wildcards like "text/*"); each takes a string or a list. All given criteria must match.
+#
+# renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
+#   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
+#   "video" (info view), "table" (CSV/TSV table), "diff" (coloured diff),
+#   "log" (coloured log levels), "hex" (hex dump), "pdf" (info and pages),
+#   "raw" (exactly cat)
+
+# [[rule]]
+# match = { ext = ["md", "txt"] }
+# line_numbers = false
+
+# [[rule]]
+# match = { name = ["Jenkinsfile"] }
+# language = "Groovy"
+
+# [[rule]]
+# match = { ext = "log" }
+# renderer = "text"

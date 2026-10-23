@@ -1,0 +1,1133 @@
+//! Per-file dispatch: cat-compatible output or rendering.
+
+use std::io::{self, BufRead, BufReader, BufWriter, IsTerminal, Read, Write};
+use std::path::Path;
+
+use syntect::easy::HighlightLines;
+
+use crate::audio;
+use crate::cat::{self, CatOptions, CatState};
+use crate::cli::Cli;
+use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, PagingMode, Renderer};
+use crate::decompress;
+use crate::detect::{self, Kind, SNIFF_BYTES};
+use crate::header;
+use crate::hexdump;
+use crate::highlight::{self, Assets};
+use crate::input::{self, Input, InputKind, Source};
+use crate::json;
+use crate::linestyle;
+use crate::listing;
+use crate::markdown;
+use crate::pager;
+use crate::table;
+use crate::term::{self, ColorDepth, query};
+use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
+use crate::video;
+
+/// Lines longer than this are shown unhighlighted from that point on.
+const MAX_RENDER_LINE: usize = 1024 * 1024;
+const RESET: &[u8] = b"\x1b[0m";
+
+pub fn run(cli: &Cli, config: &Config) -> i32 {
+    let stdout = io::stdout();
+    let stdout_tty = stdout.is_terminal();
+    let render = !cli.raw && (stdout_tty || cli.force_render) && !cli.wants_cat_visualisation();
+    let out_identity = input::stdout_identity();
+
+    let mut ctx = Context::new(cli, config, stdout_tty);
+
+    let mut sources = Source::from_args(&cli.files);
+    if cli.files.is_empty()
+        && listing::no_args_action(io::stdin().is_terminal(), render, config.defaults.no_args)
+            == listing::NoArgsAction::ListCurrentDir
+    {
+        sources = vec![Source::Path(".".into())];
+    }
+    if render && config.defaults.directories == Directories::List {
+        ctx.dir_args = sources
+            .iter()
+            .filter(|s| matches!(s, Source::Path(p) if p.is_dir()))
+            .count();
+    }
+    ctx.show_headers =
+        render && stdout_tty && sources.len() > 1 && !cli.plain && config.defaults.headers;
+
+    // Decide on paging up front: only when every file is text-like (no graphics, no media).
+    let mode = cli.paging.unwrap_or(config.defaults.paging);
+    let decision = pager::decide(
+        mode,
+        stdout_tty,
+        render,
+        mode != PagingMode::Never && stdout_tty && render && all_pageable(&sources, &ctx),
+    );
+    let mut output = pager::Output::new(stdout.lock(), pager::plan(decision));
+    let paged = output.is_paged();
+    let status = {
+        let mut out = TrackedWriter::new(BufWriter::with_capacity(64 * 1024, &mut output));
+        process_all(&sources, render, out_identity, paged, &mut ctx, &mut out)
+    };
+    match output.finish() {
+        Err(err) if paged && err.kind() == io::ErrorKind::BrokenPipe => status,
+        Err(err) => {
+            eprintln!("scat: write error: {}", io_message(&err));
+            1
+        }
+        Ok(()) => status,
+    }
+}
+
+/// Whether an error is the pager having quit early: stop quietly, not a failure.
+fn pager_quit(paged: bool, err: &io::Error) -> bool {
+    paged && err.kind() == io::ErrorKind::BrokenPipe
+}
+
+fn process_all<W: Write>(
+    sources: &[Source],
+    render: bool,
+    out_identity: Option<(u64, u64)>,
+    paged: bool,
+    ctx: &mut Context,
+    out: &mut TrackedWriter<W>,
+) -> i32 {
+    let mut cat_state = CatState::default();
+    let mut status = 0;
+    for source in sources {
+        let result = process(source, render, out_identity, ctx, out, &mut cat_state);
+        if let Err(err) = result {
+            if out.failed {
+                if pager_quit(paged, &err) {
+                    return 0;
+                }
+                eprintln!("scat: write error: {}", io_message(&err));
+                return 1;
+            }
+            let _ = out.flush();
+            eprintln!("scat: {}: {}", source.display_name(), io_message(&err));
+            status = 1;
+        }
+    }
+    if let Err(err) = cat::finish(out, &mut cat_state).and_then(|()| out.flush()) {
+        if pager_quit(paged, &err) {
+            return 0;
+        }
+        eprintln!("scat: write error: {}", io_message(&err));
+        return 1;
+    }
+    status
+}
+
+/// True when every source is a file or directory that renders as plain text (or a hex
+/// dump), so a pager can show it. Standard input cannot be sniffed ahead of time.
+fn all_pageable(sources: &[Source], ctx: &Context) -> bool {
+    sources.iter().all(|source| source_pageable(source, ctx))
+}
+
+fn source_pageable(source: &Source, ctx: &Context) -> bool {
+    let Source::Path(path) = source else {
+        return false;
+    };
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if meta.is_dir() {
+        return ctx.config.defaults.directories == Directories::List;
+    }
+    if !meta.is_file() {
+        return false;
+    }
+    let mut head = Vec::new();
+    let sniffed = std::fs::File::open(path)
+        .and_then(|file| file.take(SNIFF_BYTES as u64).read_to_end(&mut head));
+    if sniffed.is_err() {
+        return false;
+    }
+    // Compressed files are decoded later and may hold anything, images included.
+    if decompress::detect(&head).is_some() {
+        return false;
+    }
+    let detected = detect::detect(&head);
+    let file_name = source.file_name();
+    let settings = ctx
+        .config
+        .settings_for(file_name.as_deref(), &detected.mime);
+    let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+    let as_markdown = match settings.renderer {
+        Renderer::Markdown => true,
+        Renderer::Auto => markdown::is_markdown(file_name.as_deref(), language),
+        _ => false,
+    };
+    // Markdown may draw inline images, and graphics escapes must never reach a pager.
+    if as_markdown && markdown_has_images(path) {
+        return false;
+    }
+    pager::renderer_is_pageable(
+        settings.renderer,
+        &detected.kind,
+        &detected.mime,
+        crate::image::wants(&detected.mime, file_name.as_deref(), &head),
+        is_audio(&detected, file_name.as_deref()),
+    )
+}
+
+/// Whether a markdown file references an image (`![`), read up to 4 MiB.
+fn markdown_has_images(path: &std::path::Path) -> bool {
+    let mut text = Vec::new();
+    let read = std::fs::File::open(path).and_then(|f| f.take(4 << 20).read_to_end(&mut text));
+    read.is_err() || text.windows(2).any(|w| w == b"![")
+}
+
+/// The rule before a file when several are rendered, with a blank line between files.
+fn write_header<W: Write>(source: &Source, ctx: &mut Context, out: &mut W) -> io::Result<()> {
+    if ctx.printed > 0 {
+        out.write_all(b"\n")?;
+    }
+    ctx.printed += 1;
+    let name = match source {
+        Source::Stdin => "-".to_string(),
+        Source::Path(path) => path.to_string_lossy().into_owned(),
+    };
+    let width = listing::terminal_width();
+    out.write_all(header::line(&name, width, ctx.colors, ctx.utf8).as_bytes())
+}
+
+fn process<W: Write>(
+    source: &Source,
+    render: bool,
+    out_identity: Option<(u64, u64)>,
+    ctx: &mut Context,
+    out: &mut TrackedWriter<W>,
+    cat_state: &mut CatState,
+) -> io::Result<()> {
+    if let Source::Path(path) = source
+        && render
+        && ctx.config.defaults.directories == Directories::List
+        && path.is_dir()
+    {
+        return list_directory(path, ctx, out);
+    }
+    let mut input = input::open(source)?;
+    if input::copies_onto_itself(source, &input, out_identity) {
+        return Err(io::Error::other("input file is output file"));
+    }
+
+    if !render || input.kind == InputKind::Device {
+        return write_cat(&mut input, out, &ctx.cat_options, cat_state);
+    }
+    if ctx.show_headers {
+        write_header(source, ctx, out)?;
+    }
+
+    let mut head = sniff(&mut input)?;
+    let mut detected = detect::detect(&head);
+    let mut file_name = source.file_name();
+    let mut settings = ctx
+        .config
+        .settings_for(file_name.as_deref(), &detected.mime);
+
+    // Single-stream .gz/.xz/.zst/.bz2: decode, then treat the inside like any file.
+    let mut truncated = None;
+    if settings.renderer != Renderer::Raw
+        && let Some(format) = decompress::detect(&head)
+        && !decompress::is_tarball(file_name.as_deref(), &head, format)
+    {
+        let outer = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+        let (reader, hit) = decompress::open(
+            format,
+            Box::new(outer),
+            ctx.config.defaults.max_decompressed_bytes,
+        )?;
+        input.reader = BufReader::with_capacity(64 * 1024, reader);
+        input.kind = InputKind::Stream;
+        input.identity = None;
+        truncated = Some(hit);
+        file_name = file_name.map(|name| decompress::inner_name(&name));
+        head = sniff(&mut input)?;
+        detected = detect::detect(&head);
+        settings = ctx
+            .config
+            .settings_for(file_name.as_deref(), &detected.mime);
+    }
+    ctx.text_kind = text_kind(
+        settings.renderer,
+        ctx.cli.language.as_deref().or(settings.language.as_deref()),
+        file_name.as_deref(),
+        &head,
+    );
+
+    let is_video = settings.renderer == Renderer::Auto && detected.mime.starts_with("video/");
+    let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+    let as_markdown = match settings.renderer {
+        Renderer::Markdown => true,
+        Renderer::Auto => markdown::is_markdown(file_name.as_deref(), language),
+        _ => false,
+    };
+
+    let delimited = table::delimiter_for(file_name.as_deref(), language);
+    if matches!(settings.renderer, Renderer::Auto | Renderer::Code)
+        && detected.kind == Kind::Text
+        && json::is_json(file_name.as_deref(), language)
+    {
+        json::prettify_input(&mut input, &head)?;
+    }
+
+    let result = match settings.renderer {
+        Renderer::Video => render_video(source, &input, out, ctx, &detected.mime),
+        Renderer::Auto if is_video => render_video(source, &input, out, ctx, &detected.mime),
+        Renderer::Raw => write_cat(&mut input, out, &ctx.cat_options, cat_state),
+        Renderer::Audio => audio::render(
+            out,
+            source,
+            &mut input,
+            &detected.mime,
+            ctx.colors,
+            ctx.utf8,
+            &mut || ctx.image_screen(),
+        ),
+        Renderer::Auto if is_audio(&detected, file_name.as_deref()) => audio::render(
+            out,
+            source,
+            &mut input,
+            &detected.mime,
+            ctx.colors,
+            ctx.utf8,
+            &mut || ctx.image_screen(),
+        ),
+        Renderer::Pdf => render_pdf(&mut input, out, ctx, source),
+        Renderer::Auto if crate::pdf::wants(&detected.mime, &head) => {
+            render_pdf(&mut input, out, ctx, source)
+        }
+        Renderer::Image => render_image(&mut input, out, ctx, source, &head),
+        Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
+            render_image(&mut input, out, ctx, source, &head)
+        }
+        Renderer::Table => render_table(
+            &mut input,
+            out,
+            ctx,
+            &settings,
+            &head,
+            delimited.unwrap_or(table::Delimiter::Sniff),
+        ),
+        Renderer::Auto if detected.kind == Kind::Text && delimited.is_some() => render_table(
+            &mut input,
+            out,
+            ctx,
+            &settings,
+            &head,
+            delimited.unwrap_or(table::Delimiter::Sniff),
+        ),
+        Renderer::Hex => render_hex(&mut input, out, ctx),
+        Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
+        _ if as_markdown => {
+            let doc = (&settings, file_name.as_deref(), source);
+            render_markdown(&mut input, out, ctx, doc, &head)
+        }
+        _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
+    };
+    if truncated.is_some_and(|hit| hit.get()) {
+        out.flush()?;
+        eprintln!(
+            "scat: {}: decompressed output stopped at {} (max_decompressed_bytes)",
+            source.display_name(),
+            human_size(ctx.config.defaults.max_decompressed_bytes)
+        );
+    }
+    result
+}
+
+/// The first bytes of the input for type detection, left unconsumed in the reader.
+fn sniff(input: &mut Input) -> io::Result<Vec<u8>> {
+    let head = input.reader.fill_buf()?;
+    Ok(head[..head.len().min(SNIFF_BYTES)].to_vec())
+}
+
+/// Whether a text file gets diff or log colouring: forced by the renderer setting or
+/// `-l diff|patch|log`, by extension, or (diffs, and logs without a known extension)
+/// by what the first lines look like.
+pub fn text_kind(
+    renderer: Renderer,
+    language: Option<&str>,
+    file_name: Option<&str>,
+    head: &[u8],
+) -> Option<linestyle::Kind> {
+    use linestyle::Kind;
+    match renderer {
+        Renderer::Diff => return Some(Kind::Diff),
+        Renderer::Log => return Some(Kind::Log),
+        Renderer::Auto => {}
+        _ => return None,
+    }
+    let ext = file_name
+        .and_then(|n| n.rsplit_once('.'))
+        .map(|(_, e)| e.to_ascii_lowercase());
+    let named = language
+        .map(str::to_ascii_lowercase)
+        .or(ext.clone())
+        .unwrap_or_default();
+    match named.as_str() {
+        "diff" | "patch" => return Some(Kind::Diff),
+        "log" => return Some(Kind::Log),
+        _ => {}
+    }
+    if language.is_some() || markdown::is_markdown(file_name, language) {
+        return None;
+    }
+    if linestyle::looks_like_diff(head) {
+        return Some(Kind::Diff);
+    }
+    let unnamed = ext
+        .as_deref()
+        .is_none_or(|e| matches!(e, "txt" | "out" | "err"));
+    (unnamed && linestyle::looks_like_log(head)).then_some(Kind::Log)
+}
+
+/// Hex dump of the first `[hexdump] max_bytes` bytes.
+fn render_hex<W: Write>(input: &mut Input, out: &mut W, ctx: &Context) -> io::Result<()> {
+    let total = match input.kind {
+        InputKind::Regular { size } => Some(size),
+        _ => None,
+    };
+    let opts = hexdump::Options {
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        max_bytes: ctx.config.hexdump.max_bytes.max(16),
+    };
+    hexdump::render(out, &mut input.reader, total, &opts)
+}
+
+/// Video info view. ffprobe opens the file by path, so standard input and pipes only
+/// get a notice on stderr (exit status 0, like the binary notice).
+fn render_video<W: Write>(
+    source: &Source,
+    input: &Input,
+    out: &mut W,
+    ctx: &mut Context,
+    mime: &str,
+) -> io::Result<()> {
+    let (Source::Path(path), InputKind::Regular { size }) = (source, input.kind) else {
+        out.flush()?;
+        eprintln!(
+            "scat: {}: video info needs a file (use --raw for bytes)",
+            source.display_name()
+        );
+        return Ok(());
+    };
+    let name = source.file_name().unwrap_or_else(|| source.display_name());
+    let colors = ctx.colors;
+    video::render(out, path, &name, Some(size), mime, colors, &mut || {
+        ctx.image_screen()
+    })
+}
+
+fn render_table<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    settings: &FileSettings,
+    head: &[u8],
+    delimiter: table::Delimiter,
+) -> io::Result<()> {
+    let cli = ctx.cli;
+    let opts = table::Options {
+        width: listing::terminal_width(),
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        line_numbers: !cli.plain && (cli.number || cli.number_nonblank || settings.line_numbers),
+        max_rows: ctx.config.table.max_rows,
+    };
+    table::render(&mut input.reader, head, delimiter, &opts, out)
+}
+
+fn list_directory<W: Write>(
+    path: &std::path::Path,
+    ctx: &mut Context,
+    out: &mut TrackedWriter<W>,
+) -> io::Result<()> {
+    let style = if ctx.cli.long {
+        ListStyle::Long
+    } else {
+        ctx.config.list.style
+    };
+    let opts = listing::Options {
+        all: ctx.cli.all || ctx.config.list.show_hidden,
+        style,
+        colors: ctx.colors,
+        width: listing::terminal_width(),
+    };
+    // Build first so an unreadable directory prints no header, only the error.
+    let mut buf = Vec::new();
+    listing::list(path, &opts, &mut buf)?;
+    if ctx.dir_args > 1 {
+        if ctx.listed > 0 {
+            out.write_all(b"\n")?;
+        }
+        writeln!(out, "{}:", listing::safe_name(&path.to_string_lossy()))?;
+    }
+    ctx.listed += 1;
+    ctx.printed += 1;
+    out.write_all(&buf)
+}
+
+/// Files that get the audio view with the `auto` renderer: an `audio/*` MIME type, or
+/// an unrecognised binary file with an audio extension that sniffing misses (WavPack).
+pub fn is_audio(detected: &detect::Detected, file_name: Option<&str>) -> bool {
+    detected.mime.starts_with("audio/")
+        || (detected.kind == Kind::Binary && audio::has_audio_extension(file_name))
+}
+
+/// Renders a markdown file. Files over `max_highlight_bytes` are shown as text instead.
+fn render_markdown<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    (settings, file_name, source): (&FileSettings, Option<&str>, &Source),
+    head: &[u8],
+) -> io::Result<()> {
+    let limit = ctx.config.defaults.max_highlight_bytes;
+    if matches!(input.kind, InputKind::Regular { size } if size > limit) {
+        return render_text(input, out, ctx, settings, file_name, head);
+    }
+    let mut data = Vec::new();
+    (&mut input.reader).take(limit + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > limit {
+        // A stream too large to hold: put back what was read and show it as text.
+        let rest = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+        input.reader = BufReader::new(Box::new(io::Cursor::new(data).chain(rest)));
+        return render_text(input, out, ctx, settings, file_name, head);
+    }
+    let text = String::from_utf8_lossy(&data);
+
+    let light = ctx.colors && ctx.depth != ColorDepth::Ansi16 && ctx.background_is_light();
+    let opts = markdown::Options {
+        width: markdown::render_width(ctx.stdout_tty),
+        colors: ctx.colors,
+        depth: ctx.depth,
+        utf8: ctx.utf8,
+        hyperlinks: ctx.colors && ctx.stdout_tty && !term::is_basic_terminal(),
+        light,
+        tab_width: settings.tab_width,
+    };
+    // Both callbacks need the context; they never run at the same time.
+    let ctx = std::cell::RefCell::new(ctx);
+    let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
+        let mut guard = ctx.borrow_mut();
+        let ctx: &mut Context = &mut guard;
+        let theme_name = ctx.theme_name(settings);
+        let assets = ctx.assets.get_or_insert_with(Assets::load);
+        let syntax = assets.find_syntax(Some(lang), None, "")?;
+        let theme = assets
+            .theme(&theme_name)
+            .or_else(|| assets.theme(&ctx.config.defaults.theme_dark))?;
+        let mut highlighter = HighlightLines::new(syntax, theme);
+        let mut lines = Vec::new();
+        for line in syntect::util::LinesWithEndings::from(code) {
+            let regions = highlighter.highlight_line(line, &assets.syntaxes).ok()?;
+            let mut encoded = Vec::with_capacity(line.len() * 2);
+            let mut column = 0;
+            for (style, piece) in regions {
+                let piece = piece.trim_end_matches(['\n', '\r']);
+                if piece.is_empty() {
+                    continue;
+                }
+                encoded.extend_from_slice(highlight::style_sgr(style, ctx.depth).as_bytes());
+                sanitize(
+                    &mut encoded,
+                    piece.as_bytes(),
+                    SgrMode::Escape,
+                    settings.tab_width,
+                    &mut column,
+                );
+            }
+            encoded.extend_from_slice(RESET);
+            lines.push(encoded);
+        }
+        Some(lines)
+    };
+    // Image paths are relative to the document's directory; standard input has none,
+    // so its images keep their placeholders.
+    let base = match source {
+        Source::Path(path) => Some(path.parent().map(Path::to_path_buf).unwrap_or_default()),
+        Source::Stdin => None,
+    };
+    let mut images = |dest: &str, max_cols: u16| -> Option<crate::image::Drawn> {
+        let path = markdown::local_image_path(base.as_deref()?, dest)?;
+        let screen = ctx.borrow_mut().image_screen();
+        markdown_image(&screen, &path, max_cols)
+    };
+    let rendered = markdown::render_with_images(&text, &opts, &mut highlight, &mut images);
+    out.write_all(&rendered)
+}
+
+/// Markdown images are at most this many rows high.
+const MARKDOWN_IMAGE_ROWS: u16 = 15;
+/// Larger image files in markdown documents are left as placeholders.
+const MARKDOWN_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Draws a local image for a markdown document with kitty, sixel or blocks. ASCII
+/// output, unreadable files and decoding errors keep the placeholder.
+fn markdown_image(
+    screen: &crate::image::Screen,
+    path: &Path,
+    max_cols: u16,
+) -> Option<crate::image::Drawn> {
+    if screen.method == crate::image::Method::Ascii {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut data = Vec::new();
+    file.take(MARKDOWN_IMAGE_BYTES + 1)
+        .read_to_end(&mut data)
+        .ok()?;
+    if data.len() as u64 > MARKDOWN_IMAGE_BYTES {
+        return None;
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    let head = &data[..data.len().min(SNIFF_BYTES)];
+    let svg = crate::image::is_svg(name.as_deref(), head);
+    let opts = crate::image::ShowOptions {
+        max_cols: Some(max_cols),
+        max_rows: Some(MARKDOWN_IMAGE_ROWS),
+        ..Default::default()
+    };
+    crate::image::draw_encoded(screen, data, svg, &opts).ok()
+}
+
+fn write_cat<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    opts: &CatOptions,
+    state: &mut CatState,
+) -> io::Result<()> {
+    if opts.is_passthrough() {
+        cat::copy_raw(&mut input.reader, out)
+    } else {
+        cat::process(&mut input.reader, out, opts, state)
+    }
+}
+
+/// Lazily created state shared by all files of one run.
+struct Context<'a> {
+    cli: &'a Cli,
+    config: &'a Config,
+    cat_options: CatOptions,
+    colors: bool,
+    depth: ColorDepth,
+    utf8: bool,
+    stdout_tty: bool,
+    assets: Option<Assets>,
+    caps: Option<Option<query::Capabilities>>,
+    image_screen: Option<crate::image::Screen>,
+    warned_theme: bool,
+    /// Directory arguments being listed, and how many are done: headers for several.
+    dir_args: usize,
+    listed: usize,
+    /// Print a rule with the file name before each file (several files, terminal).
+    show_headers: bool,
+    /// Files and listings printed so far, for the blank line between headed files.
+    printed: usize,
+    /// Diff or log colouring for the file being rendered.
+    text_kind: Option<linestyle::Kind>,
+}
+
+impl<'a> Context<'a> {
+    fn new(cli: &'a Cli, config: &'a Config, stdout_tty: bool) -> Self {
+        let when = cli.color.unwrap_or(config.defaults.color);
+        Self {
+            cli,
+            config,
+            cat_options: CatOptions::from_cli(cli),
+            colors: term::colors_enabled(when, stdout_tty),
+            depth: term::color_depth(),
+            utf8: term::utf8_locale(),
+            stdout_tty,
+            assets: None,
+            caps: None,
+            image_screen: None,
+            warned_theme: false,
+            dir_args: 0,
+            listed: 0,
+            show_headers: false,
+            printed: 0,
+            text_kind: None,
+        }
+    }
+
+    fn capabilities(&mut self) -> Option<&query::Capabilities> {
+        if self.caps.is_none() {
+            let caps = if self.stdout_tty && !term::is_basic_terminal() {
+                query::query(query::DEFAULT_TIMEOUT)
+                    .ok()
+                    .filter(|c| c.answered)
+            } else {
+                None
+            };
+            self.caps = Some(caps);
+        }
+        self.caps.as_ref().and_then(Option::as_ref)
+    }
+
+    /// How images are drawn in this run; queries the terminal on first use when the
+    /// choice depends on it.
+    pub(crate) fn image_screen(&mut self) -> crate::image::Screen {
+        if let Some(screen) = &self.image_screen {
+            return screen.clone();
+        }
+        let (protocol, protocol_source) = image_protocol(self.cli, self.config);
+        let caps = if crate::image::needs_query(protocol, self.stdout_tty) {
+            self.capabilities().cloned()
+        } else {
+            None
+        };
+        let screen = crate::image::Screen::detect(&crate::image::Env {
+            protocol,
+            protocol_source,
+            caps: caps.as_ref(),
+            stdout_tty: self.stdout_tty,
+            utf8: self.utf8,
+            colors: self.colors,
+            depth: self.depth,
+            multiplexer: term::multiplexer(),
+            max_height: self.config.image.max_height,
+        });
+        self.image_screen = Some(screen.clone());
+        screen
+    }
+
+    fn background_is_light(&mut self) -> bool {
+        if let Some(light) = self.capabilities().and_then(|c| c.background_is_light()) {
+            return light;
+        }
+        // COLORFGBG="fg;bg" (rxvt, konsole): bg 7 or 15 means a light background.
+        term::hint("COLORFGBG")
+            .and_then(|v| v.rsplit(';').next().and_then(|bg| bg.parse::<u8>().ok()))
+            .is_some_and(|bg| bg == 7 || bg == 15)
+    }
+
+    fn theme_name(&mut self, settings: &FileSettings) -> String {
+        if let Some(theme) = self.cli.theme.clone().or_else(|| settings.theme.clone()) {
+            return theme;
+        }
+        if self.depth == ColorDepth::Ansi16 {
+            return "ansi".into();
+        }
+        if self.background_is_light() {
+            self.config.defaults.theme_light.clone()
+        } else {
+            self.config.defaults.theme_dark.clone()
+        }
+    }
+}
+
+/// The image protocol setting and where it came from.
+pub fn image_protocol(cli: &Cli, config: &Config) -> (crate::config::Protocol, &'static str) {
+    match cli.protocol {
+        Some(protocol) => (protocol, "--protocol or SCAT_PROTOCOL"),
+        None => (config.image.protocol, "config"),
+    }
+}
+
+fn render_image<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    source: &Source,
+    head: &[u8],
+) -> io::Result<()> {
+    let screen = ctx.image_screen();
+    let file_name = source.file_name();
+    let options = crate::image::ViewOptions {
+        name: &source.display_name(),
+        file_size: match input.kind {
+            InputKind::Regular { size } => Some(size),
+            _ => None,
+        },
+        svg: crate::image::is_svg(file_name.as_deref(), head),
+        animate: !ctx.cli.no_animate && ctx.config.image.animate,
+        caption: !ctx.cli.plain,
+    };
+    crate::image::view(input, out, &screen, &options)
+}
+
+/// PDF view. Pages are drawn as images on a terminal; their text is shown with
+/// `--text`, when only ASCII art is possible, and for `-f` into a pipe (unless
+/// `--protocol` asks for images).
+fn render_pdf<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    source: &Source,
+) -> io::Result<()> {
+    let want_images = !ctx.cli.text && (ctx.stdout_tty || ctx.cli.protocol.is_some());
+    let screen = if want_images {
+        Some(ctx.image_screen()).filter(|s| s.method != crate::image::Method::Ascii)
+    } else {
+        None
+    };
+    let name = source.display_name();
+    let opts = crate::pdf::Options {
+        name: &name,
+        pages: ctx.cli.pages.as_ref().unwrap_or(&ctx.config.pdf.pages),
+        max_pages: ctx.config.pdf.max_pages,
+        screen,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        plain: ctx.cli.plain,
+    };
+    crate::pdf::render(out, source, input, &opts)
+}
+
+fn render_text<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &mut Context,
+    settings: &FileSettings,
+    file_name: Option<&str>,
+    head: &[u8],
+) -> io::Result<()> {
+    let cli = ctx.cli;
+    let line_numbers = !cli.plain && (cli.number || cli.number_nonblank || settings.line_numbers);
+    let squeeze = cli.squeeze_blank;
+    let tab_width = settings.tab_width;
+    let small_enough = match input.kind {
+        InputKind::Regular { size } => size <= ctx.config.defaults.max_highlight_bytes,
+        _ => true,
+    };
+    let sgr_mode = match (ctx.config.defaults.ansi, ctx.colors) {
+        (AnsiMode::Escape, _) => SgrMode::Escape,
+        (AnsiMode::KeepSgr, true) => SgrMode::Keep,
+        (AnsiMode::KeepSgr, false) => SgrMode::Strip,
+    };
+
+    let mut styler = ctx
+        .text_kind
+        .filter(|_| ctx.colors)
+        .map(linestyle::Styler::new);
+    let want_highlight = ctx.colors
+        && settings.renderer != Renderer::Text
+        && small_enough
+        && ctx.text_kind.is_none();
+    let theme_name = if want_highlight {
+        Some(ctx.theme_name(settings))
+    } else {
+        None
+    };
+    if want_highlight && ctx.assets.is_none() {
+        ctx.assets = Some(Assets::load());
+    }
+    let mut highlighter = None;
+    if let (Some(assets), Some(theme_name)) = (ctx.assets.as_ref(), theme_name) {
+        let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
+        let language = cli.language.as_deref().or(settings.language.as_deref());
+        let syntax = assets.find_syntax(language, file_name, &format!("{first_line}\n"));
+        if syntax.is_none()
+            && let Some(language) = language
+        {
+            eprintln!("scat: unknown language '{language}'; see --list-languages");
+        }
+        let theme = assets.theme(&theme_name).or_else(|| {
+            if !ctx.warned_theme {
+                eprintln!("scat: unknown theme '{theme_name}'; see --list-themes");
+                ctx.warned_theme = true;
+            }
+            assets.theme(&ctx.config.defaults.theme_dark)
+        });
+        if let (Some(syntax), Some(theme)) = (syntax, theme) {
+            highlighter = Some(HighlightLines::new(syntax, theme));
+        }
+    }
+    let syntaxes = ctx.assets.as_ref().map(|a| &a.syntaxes);
+
+    let separator = if ctx.utf8 { "│" } else { "|" };
+    let (dim, undim) = if ctx.colors {
+        ("\x1b[2m", "\x1b[22m")
+    } else {
+        ("", "")
+    };
+
+    let mut line = Vec::with_capacity(8 * 1024);
+    let mut number = 0u64;
+    let mut blank_run = 0u32;
+    let mut at_line_start = true;
+    let mut passed_sgr = false;
+    let mut encoded = Vec::with_capacity(8 * 1024);
+
+    loop {
+        if input.reader.buffer().is_empty() {
+            out.flush()?;
+        }
+        let Some(terminated) = read_line_capped(&mut input.reader, &mut line, MAX_RENDER_LINE)?
+        else {
+            break;
+        };
+        let body_len = if line.ends_with(b"\r\n") {
+            line.len() - 2
+        } else if terminated {
+            line.len() - 1
+        } else {
+            line.len()
+        };
+
+        if at_line_start {
+            let blank = terminated && body_len == 0;
+            if blank {
+                if squeeze && blank_run > 0 {
+                    continue;
+                }
+                blank_run += 1;
+            } else {
+                blank_run = 0;
+            }
+            if line_numbers {
+                if blank && cli.number_nonblank {
+                    write!(out, "{dim}     {separator}{undim} ")?;
+                } else {
+                    number += 1;
+                    write!(out, "{dim}{number:>4} {separator}{undim} ")?;
+                }
+            }
+        }
+        if !terminated {
+            // A partial line breaks the highlighter's line-by-line state.
+            highlighter = None;
+        }
+
+        encoded.clear();
+        let mut column = 0usize;
+        let text = String::from_utf8_lossy(&line);
+        let mut highlighted = false;
+        if let (Some(hl), Some(syntaxes)) = (highlighter.as_mut(), syntaxes) {
+            match hl.highlight_line(&text, syntaxes) {
+                Ok(regions) => {
+                    for (style, piece) in regions {
+                        let piece = piece.trim_end_matches(['\n', '\r']);
+                        if piece.is_empty() {
+                            continue;
+                        }
+                        encoded
+                            .extend_from_slice(highlight::style_sgr(style, ctx.depth).as_bytes());
+                        sanitize(
+                            &mut encoded,
+                            piece.as_bytes(),
+                            SgrMode::Escape,
+                            tab_width,
+                            &mut column,
+                        );
+                    }
+                    encoded.extend_from_slice(RESET);
+                    highlighted = true;
+                }
+                Err(_) => highlighter = None,
+            }
+        }
+        if !highlighted
+            && at_line_start
+            && !text.contains('\x1b')
+            && let Some(styler) = styler.as_mut()
+        {
+            let body = text.strip_suffix('\n').unwrap_or(&text);
+            let body = body.strip_suffix('\r').unwrap_or(body);
+            for (range, sgr) in styler.spans(body) {
+                encoded.extend_from_slice(sgr.as_bytes());
+                sanitize(
+                    &mut encoded,
+                    &body.as_bytes()[range],
+                    SgrMode::Escape,
+                    tab_width,
+                    &mut column,
+                );
+                if !sgr.is_empty() {
+                    encoded.extend_from_slice(RESET);
+                }
+            }
+            highlighted = true;
+        }
+        if !highlighted {
+            let body = text.strip_suffix('\n').unwrap_or(&text);
+            let body = body.strip_suffix('\r').unwrap_or(body);
+            passed_sgr |= sanitize(
+                &mut encoded,
+                body.as_bytes(),
+                sgr_mode,
+                tab_width,
+                &mut column,
+            );
+        }
+        if terminated {
+            encoded.push(b'\n');
+        }
+        out.write_all(&encoded)?;
+        at_line_start = terminated;
+    }
+    if passed_sgr {
+        out.write_all(RESET)?;
+    }
+    Ok(())
+}
+
+/// Sanitizes a short string from a file (a tag, a title) for display: control
+/// characters become ^X, escape sequences cannot pass, tabs become spaces.
+pub fn sanitize_str(text: &str) -> String {
+    let mut out = Vec::with_capacity(text.len());
+    let mut column = 0;
+    sanitize(&mut out, text.as_bytes(), SgrMode::Escape, 1, &mut column);
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Sanitizes one line of a file for display, expanding tabs to `tab_width` columns.
+pub fn sanitize_line(text: &str, tab_width: usize) -> String {
+    let mut out = Vec::with_capacity(text.len());
+    let mut column = 0;
+    sanitize(
+        &mut out,
+        text.as_bytes(),
+        SgrMode::Escape,
+        tab_width,
+        &mut column,
+    );
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SgrMode {
+    Keep,
+    Strip,
+    Escape,
+}
+
+/// Makes text safe to print on a terminal: expands tabs, shows control characters in
+/// ^X notation and keeps, strips or escapes SGR colour sequences. `text` must be valid
+/// UTF-8. Returns true if any SGR sequence was passed through.
+fn sanitize(
+    out: &mut Vec<u8>,
+    text: &[u8],
+    mode: SgrMode,
+    tab_width: usize,
+    column: &mut usize,
+) -> bool {
+    let mut passed_sgr = false;
+    let mut i = 0;
+    while i < text.len() {
+        let byte = text[i];
+        if byte == 0x1b && mode != SgrMode::Escape && text.get(i + 1) == Some(&b'[') {
+            let mut end = i + 2;
+            while end < text.len()
+                && (text[end].is_ascii_digit() || text[end] == b';' || text[end] == b':')
+            {
+                end += 1;
+            }
+            if text.get(end) == Some(&b'm') {
+                if mode == SgrMode::Keep {
+                    out.extend_from_slice(&text[i..=end]);
+                    passed_sgr = true;
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        match byte {
+            b'\t' if tab_width > 0 => {
+                let spaces = tab_width - (*column % tab_width);
+                out.extend(std::iter::repeat_n(b' ', spaces));
+                *column += spaces;
+            }
+            b'\t' => {
+                out.push(b'\t');
+                *column += 1;
+            }
+            0..=0x1f | 0x7f => {
+                cat::push_caret_notation(out, byte);
+                *column += 2;
+            }
+            // C1 control characters (U+0080..U+009F) encoded as UTF-8.
+            0xc2 if text.get(i + 1).is_some_and(|b| (0x80..=0x9f).contains(b)) => {
+                out.extend_from_slice("\u{fffd}".as_bytes());
+                *column += 1;
+                i += 1;
+            }
+            // Bidi controls reorder what is shown (Trojan Source); show them instead.
+            0xd8 | 0xe2 if bidi_control(&text[i..]).is_some() => {
+                let (code, len) = bidi_control(&text[i..]).unwrap_or_default();
+                let shown = format!("<U+{code:04X}>");
+                out.extend_from_slice(shown.as_bytes());
+                *column += shown.len();
+                i += len - 1;
+            }
+            _ => {
+                out.push(byte);
+                if byte & 0xc0 != 0x80 {
+                    *column += 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    passed_sgr
+}
+
+/// The code point and UTF-8 length of a bidirectional formatting control at the start
+/// of `bytes`: U+061C, U+200E, U+200F, U+202A..U+202E and U+2066..U+2069.
+fn bidi_control(bytes: &[u8]) -> Option<(u32, usize)> {
+    match *bytes {
+        [0xd8, 0x9c, ..] => Some((0x061c, 2)),
+        [0xe2, 0x80, b @ (0x8e | 0x8f | 0xaa..=0xae), ..] => {
+            Some((0x2000 + u32::from(b - 0x80), 3))
+        }
+        [0xe2, 0x81, b @ 0xa6..=0xa9, ..] => Some((0x2040 + u32::from(b - 0x80), 3)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clean(text: &str, mode: SgrMode) -> String {
+        let mut out = Vec::new();
+        let mut column = 0;
+        sanitize(&mut out, text.as_bytes(), mode, 4, &mut column);
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn escapes_dangerous_sequences() {
+        // Window title and clipboard (OSC 52) sequences must never reach the terminal.
+        assert_eq!(clean("a\x1b]0;pwned\x07b", SgrMode::Keep), "a^[]0;pwned^Gb");
+        assert_eq!(clean("\x1b]52;c;aGk=\x07", SgrMode::Keep), "^[]52;c;aGk=^G");
+        assert_eq!(clean("x\u{9b}31m", SgrMode::Keep), "x\u{fffd}31m");
+    }
+
+    #[test]
+    fn shows_bidi_controls() {
+        // Trojan Source: an RLO/LRI must not reorder the line silently.
+        assert_eq!(
+            clean("a\u{202e}b\u{2066}c\u{200f}d\u{61c}e", SgrMode::Keep),
+            "a<U+202E>b<U+2066>c<U+200F>d<U+061C>e"
+        );
+        // Ordinary right-to-left text is left alone.
+        assert_eq!(clean("שלום مرحبا", SgrMode::Keep), "שלום مرحبا");
+        assert_eq!(clean("\u{2010}\u{2070}", SgrMode::Keep), "\u{2010}\u{2070}");
+    }
+
+    #[test]
+    fn handles_sgr_by_mode() {
+        let red = "\x1b[31mred\x1b[0m";
+        assert_eq!(clean(red, SgrMode::Keep), red);
+        assert_eq!(clean(red, SgrMode::Strip), "red");
+        assert_eq!(clean(red, SgrMode::Escape), "^[[31mred^[[0m");
+    }
+
+    #[test]
+    fn sanitizes_short_strings() {
+        assert_eq!(sanitize_str("Rose\x1b]0;x\x07\tmix"), "Rose^[]0;x^G mix");
+    }
+
+    #[test]
+    fn expands_tabs_to_tab_stops() {
+        assert_eq!(clean("a\tbc\td", SgrMode::Keep), "a   bc  d");
+        assert_eq!(clean("é\tx", SgrMode::Keep), "é   x");
+    }
+}
