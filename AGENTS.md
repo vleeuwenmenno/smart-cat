@@ -32,6 +32,8 @@ Run `make check` before handing work back.
 | `src/cat.rs` | byte-exact GNU cat behaviour (`-n -b -s -E -T -v`) |
 | `src/render.rs` | per-file dispatch, text rendering, control-character sanitizing |
 | `src/highlight.rs` | syntect + two-face (bat's syntaxes and themes), colour reduction |
+| `src/audio.rs` + `src/waveform.rs` | audio info view (lofty tags, symphonia peaks, braille/ASCII waveform) |
+| `src/play.rs` | `--play`: hands audio and video to mpv |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
 | `src/config.rs` + `src/config_template.toml` | TOML config, rules, `--init-config` |
@@ -39,6 +41,7 @@ Run `make check` before handing work back.
 | `src/diagnose.rs` | `--diagnose` report |
 | `src/update.rs` | `--update` / `--check-update` from GitHub releases |
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
+| `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
 | `install.sh` | curl-pipe installer (POSIX sh) |
 | `docs/` | one page per feature; `docs/research.md` holds the background research |
 

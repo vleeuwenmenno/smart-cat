@@ -180,12 +180,16 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
         }
     );
     let renderer = match (settings.renderer, &detected.kind) {
+        (Renderer::Auto, _) if crate::render::is_audio(&detected, file_name.as_deref()) => {
+            "audio (auto)".to_string()
+        }
         (Renderer::Auto, Kind::Binary) => "none (binary notice)".to_string(),
         (Renderer::Auto, Kind::Text) => "code (auto)".to_string(),
         (other, _) => other.to_string(),
     };
     println!("    renderer: {renderer}");
-    if detected.kind == Kind::Text && settings.renderer != Renderer::Raw {
+    if detected.kind == Kind::Text && !matches!(settings.renderer, Renderer::Raw | Renderer::Audio)
+    {
         let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
         let language = cli.language.as_deref().or(settings.language.as_deref());
         let syntax = assets.find_syntax(language, file_name.as_deref(), &format!("{first_line}\n"));

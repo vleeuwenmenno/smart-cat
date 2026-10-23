@@ -4,6 +4,7 @@ use std::io::{self, BufRead, BufWriter, IsTerminal, Write};
 
 use syntect::easy::HighlightLines;
 
+use crate::audio;
 use crate::cat::{self, CatOptions, CatState};
 use crate::cli::Cli;
 use crate::config::{AnsiMode, Config, FileSettings, Renderer};
@@ -85,6 +86,22 @@ fn process<W: Write>(
 
     match settings.renderer {
         Renderer::Raw => write_cat(&mut input, out, &ctx.cat_options, cat_state),
+        Renderer::Audio => audio::render(
+            out,
+            source,
+            &mut input,
+            &detected.mime,
+            ctx.colors,
+            ctx.utf8,
+        ),
+        Renderer::Auto if is_audio(&detected, file_name.as_deref()) => audio::render(
+            out,
+            source,
+            &mut input,
+            &detected.mime,
+            ctx.colors,
+            ctx.utf8,
+        ),
         Renderer::Auto if detected.kind == Kind::Binary => {
             out.flush()?;
             let size = match input.kind {
@@ -100,6 +117,13 @@ fn process<W: Write>(
         }
         _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
     }
+}
+
+/// Files that get the audio view with the `auto` renderer: an `audio/*` MIME type, or
+/// an unrecognised binary file with an audio extension that sniffing misses (WavPack).
+pub fn is_audio(detected: &detect::Detected, file_name: Option<&str>) -> bool {
+    detected.mime.starts_with("audio/")
+        || (detected.kind == Kind::Binary && audio::has_audio_extension(file_name))
 }
 
 fn write_cat<W: Write>(

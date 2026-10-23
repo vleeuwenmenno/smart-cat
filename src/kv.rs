@@ -6,7 +6,6 @@ use crate::render::sanitize_str;
 
 /// Writes a bold title line followed by rows with the keys aligned and dimmed.
 /// Values come from files, so they are sanitized; empty values are skipped.
-#[allow(dead_code)] // used by the audio and video renderers
 pub fn write_table<W: Write>(
     out: &mut W,
     title: &str,

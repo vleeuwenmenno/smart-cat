@@ -17,11 +17,13 @@ path = "src/main.rs"
 clap = { version = "4.6.7", features = ["derive", "env", "wrap_help"] }
 infer = "0.22.0"
 libc = "0.2.191"
+lofty = "0.24.0"
 rustix = { version = "1.1.5", features = ["termios", "event", "fs", "stdio"] }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "aac", "alac", "isomp4", "wav", "aiff", "pcm", "adpcm"] }
 syntect = { version = "5.3.0", default-features = false, features = ["parsing", "regex-onig"] }
 toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "display"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
