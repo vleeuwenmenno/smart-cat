@@ -12,6 +12,9 @@
 //! - `/dev/null` as standard input, and argv-only arguments.
 //!
 //! A crash, timeout or error in the child becomes an error message; scat goes on.
+//!
+//! The font view uses the same runner for its own helper (`--internal-font`, see
+//! [`self_command`] and [`run_with_input`]).
 
 use std::ffi::OsStr;
 use std::io::{self, Read};
@@ -66,6 +69,16 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    self_command(FLAG, args)
+}
+
+/// A command that runs scat's own binary with the hidden helper `flag` and `args`
+/// (other parsers, such as fonts, use the same limits as the PDF helper).
+pub fn self_command<I, S>(flag: &str, args: I) -> Command
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     // /proc/self/exe still works when the binary was replaced or deleted since start.
     let exe = if std::path::Path::new("/proc/self/exe").exists() {
         std::path::PathBuf::from("/proc/self/exe")
@@ -73,7 +86,7 @@ where
         std::env::current_exe().unwrap_or_else(|_| "scat".into())
     };
     let mut cmd = Command::new(exe);
-    cmd.arg(FLAG).args(args);
+    cmd.arg(flag).args(args);
     cmd
 }
 
@@ -83,10 +96,24 @@ pub fn run(cmd: Command) -> Result<Vec<u8>, RunError> {
 }
 
 /// [`run`] with its own wall clock limit.
-pub fn run_within(mut cmd: Command, timeout: Duration) -> Result<Vec<u8>, RunError> {
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+pub fn run_within(cmd: Command, timeout: Duration) -> Result<Vec<u8>, RunError> {
+    run_with_input(cmd, None, timeout)
+}
+
+/// [`run_within`] that writes `input` to the child's standard input (instead of
+/// `/dev/null`) from a separate thread, then closes it.
+pub fn run_with_input(
+    mut cmd: Command,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+) -> Result<Vec<u8>, RunError> {
+    cmd.stdin(if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     // SAFETY: only setrlimit, which is async-signal-safe, runs between fork and exec.
     unsafe {
         cmd.pre_exec(|| {
@@ -97,6 +124,21 @@ pub fn run_within(mut cmd: Command, timeout: Duration) -> Result<Vec<u8>, RunErr
         });
     }
     let mut child = cmd.spawn().map_err(RunError::Spawn)?;
+    if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
+        // A child that exits early closes the pipe. scat runs with SIGPIPE at its default
+        // (terminate), so this thread blocks it: the write fails with EPIPE instead, and
+        // the error is ignored.
+        std::thread::spawn(move || {
+            // SAFETY: changes only this thread's signal mask, with a local, initialised set.
+            unsafe {
+                let mut set: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut set);
+                libc::sigaddset(&mut set, libc::SIGPIPE);
+                libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+            }
+            let _ = std::io::Write::write_all(&mut stdin, &data);
+        });
+    }
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let out_reader = std::thread::spawn(move || {
@@ -189,6 +231,18 @@ mod tests {
             Err(RunError::Crashed(signal)) => assert_eq!(signal, libc::SIGABRT),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn feeds_standard_input_and_survives_a_closed_pipe() {
+        let out = run_with_input(sh("cat"), Some(b"font bytes".to_vec()), TIMEOUT).unwrap();
+        assert_eq!(out, b"font bytes");
+        // The child exits without reading 4 MiB: the writer gets EPIPE, not SIGPIPE.
+        let big = vec![0u8; 4 << 20];
+        assert_eq!(
+            run_with_input(sh("exit 0"), Some(big), TIMEOUT).unwrap(),
+            b""
+        );
     }
 
     #[test]

@@ -154,6 +154,7 @@ channel = "stable"
 #   "cert" (certificate and key summaries; private keys hidden),
 #   "subtitles" (srt, vtt, ass, ssa overview and cues),
 #   "diagram" (mermaid, graphviz or PlantUML source drawn as an image),
+#   "font" (font info and specimen),
 #   "database" (SQLite tables and rows), "notebook" (Jupyter notebooks), "raw" (exactly cat)
 
 # [[rule]]

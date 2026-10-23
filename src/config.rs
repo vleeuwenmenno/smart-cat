@@ -63,6 +63,8 @@ pub enum Renderer {
     Subtitles,
     /// Mermaid, graphviz or PlantUML source drawn as an image.
     Diagram,
+    /// Font info table and a rendered specimen.
+    Font,
 }
 
 impl fmt::Display for Renderer {
@@ -89,6 +91,7 @@ impl fmt::Display for Renderer {
             Renderer::Database => "database",
             Renderer::Subtitles => "subtitles",
             Renderer::Diagram => "diagram",
+            Renderer::Font => "font",
         })
     }
 }

@@ -10,6 +10,7 @@ mod detect;
 mod diagnose;
 mod diagram;
 mod fastcopy;
+mod font;
 mod generate;
 mod header;
 mod hexdump;
@@ -52,6 +53,9 @@ fn main() {
         std::process::exit(code);
     }
     if let Some(code) = diagram::helper::internal_main() {
+        std::process::exit(code);
+    }
+    if let Some(code) = font::internal_main() {
         std::process::exit(code);
     }
 

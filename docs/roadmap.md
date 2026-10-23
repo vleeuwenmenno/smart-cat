@@ -31,6 +31,7 @@ Background and library choices are in [research.md](research.md).
   - [Jupyter notebooks](notebooks.md): markdown and code cells, text, error and image outputs
   - [subtitles](subtitles.md): srt, vtt, ass and ssa with an overview (span, language, overlap and reading-speed warnings) and the cue list
   - [diagrams](diagrams.md): mermaid (built in, `mmdc` fallback), graphviz (`dot`, built-in `layout-rs` fallback) and PlantUML (`plantuml`) drawn as images, also fenced in markdown
+  - [fonts](fonts.md): TrueType, OpenType, collections, WOFF and WOFF2 with names, classes, variable axes, script coverage and features, plus a specimen drawn with resvg
   - CSV/TSV/PSV tables and minified JSON pretty-printing ([data-files.md](data-files.md))
   - transparent `.gz/.xz/.zst/.bz2` decompression ([compressed-files.md](compressed-files.md))
   - diff and log colouring ([diffs-and-logs.md](diffs-and-logs.md))

@@ -288,8 +288,10 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
     let language = cli.language.as_deref().or(settings.language.as_deref());
     let diagram = crate::diagram::detect(file_name.as_deref(), language)
         .filter(|_| detected.kind == Kind::Text);
+    let is_font = crate::font::wants(&head);
     let renderer = match (settings.renderer, &detected.kind) {
         (Renderer::Auto, _) if is_database => "database (auto)".to_string(),
+        (Renderer::Auto, _) if is_font => "font (auto)".to_string(),
         (Renderer::Auto, _) if is_pdf => "pdf (auto)".to_string(),
         (Renderer::Auto, _) if is_office => "document (auto)".to_string(),
         (Renderer::Auto, _) if is_image => "image (auto)".to_string(),
@@ -397,9 +399,10 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
                 | Renderer::Certificate
                 | Renderer::Database
                 | Renderer::Subtitles
+                | Renderer::Font
         )
         && !(settings.renderer == Renderer::Auto
-            && (is_image || is_pdf || is_archive || is_office || is_cert || is_database))
+            && (is_image || is_pdf || is_archive || is_office || is_cert || is_database || is_font))
     {
         let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
         let language = cli.language.as_deref().or(settings.language.as_deref());

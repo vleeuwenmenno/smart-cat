@@ -19,6 +19,7 @@
 | [notebooks.md](notebooks.md) | Jupyter notebooks: cells, outputs, tracebacks and inline images |
 | [sqlite.md](sqlite.md) | SQLite databases: header facts, tables, schemas, sample rows, read-only safety |
 | [subtitles.md](subtitles.md) | `.srt` `.vtt` `.ass` `.ssa`: overview with warnings, cue list, tag stripping, encodings |
+| [fonts.md](fonts.md) | TrueType, OpenType, collections, WOFF and WOFF2: info table, variable axes, coverage, rendered specimen |
 | [compressed-files.md](compressed-files.md) | transparent `.gz` `.xz` `.zst` `.bz2`: inner type detection, tarballs, size cap |
 | [diffs-and-logs.md](diffs-and-logs.md) | coloured unified diffs and log files: levels, timestamps, streaming |
 | [diagrams.md](diagrams.md) | mermaid, graphviz and PlantUML sources drawn as images, fenced diagram blocks in markdown, fallbacks |
