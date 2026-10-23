@@ -46,6 +46,8 @@ pub enum Renderer {
     Log,
     /// PDF info header and pages as images or text.
     Pdf,
+    /// SQLite database: header facts, tables, schemas and sample rows.
+    Database,
 }
 
 impl fmt::Display for Renderer {
@@ -64,6 +66,7 @@ impl fmt::Display for Renderer {
             Renderer::Diff => "diff",
             Renderer::Log => "log",
             Renderer::Pdf => "pdf",
+            Renderer::Database => "database",
         })
     }
 }
@@ -174,6 +177,7 @@ pub struct Config {
     pub table: TableConfig,
     pub hexdump: HexdumpConfig,
     pub pdf: PdfConfig,
+    pub sqlite: SqliteConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -218,6 +222,24 @@ impl Default for PdfConfig {
         Self {
             pages: crate::pdf::PageSpec::default(),
             max_pages: 20,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SqliteConfig {
+    /// Rows shown per table; 0 shows only the schema.
+    pub sample_rows: usize,
+    /// Tables shown in detail after the overview; 0 shows only the overview.
+    pub max_tables: usize,
+}
+
+impl Default for SqliteConfig {
+    fn default() -> Self {
+        Self {
+            sample_rows: 10,
+            max_tables: 20,
         }
     }
 }

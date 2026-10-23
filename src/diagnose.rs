@@ -229,7 +229,9 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
     );
     let is_image = crate::image::wants(&detected.mime, file_name.as_deref(), &head);
     let is_pdf = crate::pdf::wants(&detected.mime, &head);
+    let is_database = crate::sqlite::wants(&head);
     let renderer = match (settings.renderer, &detected.kind) {
+        (Renderer::Auto, _) if is_database => "database (auto)".to_string(),
         (Renderer::Auto, _) if is_pdf => "pdf (auto)".to_string(),
         (Renderer::Auto, _) if is_image => "image (auto)".to_string(),
         (Renderer::Auto, _) if detected.mime.starts_with("video/") => "video (auto)".to_string(),
@@ -305,8 +307,9 @@ fn describe(source: &Source, cli: &Cli, loaded: &Loaded, assets: &Assets) {
                 | Renderer::Table
                 | Renderer::Hex
                 | Renderer::Pdf
+                | Renderer::Database
         )
-        && !(settings.renderer == Renderer::Auto && (is_image || is_pdf))
+        && !(settings.renderer == Renderer::Auto && (is_image || is_pdf || is_database))
     {
         let first_line = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]));
         let language = cli.language.as_deref().or(settings.language.as_deref());

@@ -80,7 +80,8 @@ dist:
 	@test -n "$(DIST_CC)" || { echo "no C compiler for $(TARGET): install musl (musl-gcc) or pass DIST_CC=..."; exit 1; }
 	@if [ "$(DIST_CC)" = gcc ]; then echo "note: musl-gcc not found, building with gcc"; fi
 	@if command -v rustup >/dev/null 2>&1; then rustup target add $(TARGET) >/dev/null; fi
-	env $(DIST_CC_VAR)=$(DIST_CC) $(CARGO) build --release --locked --target $(TARGET)
+	@# SQLITE_DISABLE_LFS: plain open/stat names; the host-gcc fallback has no musl open64 and friends.
+	env $(DIST_CC_VAR)=$(DIST_CC) LIBSQLITE3_FLAGS=-DSQLITE_DISABLE_LFS $(CARGO) build --release --locked --target $(TARGET)
 	mkdir -p dist/stage
 	cp target/$(TARGET)/release/scat README.md LICENSE dist/stage/
 	@# Completions and the man page come from the binary itself, so only a native build can make them.

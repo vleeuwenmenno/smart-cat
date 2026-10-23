@@ -149,6 +149,24 @@ pub fn render<R: Read, W: Write>(
     out.write_all(&layout(&rows, more_rows, at_least, opts))
 }
 
+/// Draws ready-made rows (the first is the header) as a box table. `more_rows` is the
+/// number of data rows left out, for the footer. Cells are sanitized here.
+pub fn render_rows<W: Write>(
+    rows: &[Vec<String>],
+    more_rows: u64,
+    opts: &Options,
+    out: &mut W,
+) -> io::Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let cells: Vec<Vec<Cell>> = rows
+        .iter()
+        .map(|row| row.iter().map(|text| make_cell(text.clone())).collect())
+        .collect();
+    out.write_all(&layout(&cells, more_rows, false, opts))
+}
+
 fn cell(bytes: &[u8]) -> Cell {
     let text = String::from_utf8_lossy(bytes);
     let text: String = if text.chars().nth(MAX_CELL_CHARS).is_some() {
@@ -339,7 +357,7 @@ fn fitted(text: &str, width: usize, max: usize, ellipsis: &str) -> (String, usiz
     (out, used + 1)
 }
 
-fn thousands(n: u64) -> String {
+pub(crate) fn thousands(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, ch) in digits.chars().enumerate() {
