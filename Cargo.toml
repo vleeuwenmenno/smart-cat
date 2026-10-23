@@ -34,14 +34,18 @@ ruzstd = { version = "0.9.1", default-features = false, features = ["std", "hash
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sevenz-rust2 = { version = "0.20.2", default-features = false }
 sha2 = "0.11.1"
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "aac", "alac", "isomp4", "wav", "aiff", "pcm", "adpcm"] }
 syntect = { version = "5.3.0", default-features = false, features = ["parsing", "regex-onig"] }
+tar = { version = "0.4.46", default-features = false }
 toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "display"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
 unicode-width = "0.2.2"
+zip = { version = "9.0.5", default-features = false }
 
 [dev-dependencies]
+sevenz-rust2 = { version = "0.20.2", default-features = false, features = ["compress"] }
 lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz", "encoder"] }
 
 [profile.release]

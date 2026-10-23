@@ -38,6 +38,7 @@ Run `make check` before handing work back.
 | `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |
 | `src/header.rs` | file name rule printed before each file when several are rendered |
 | `src/hexdump.rs` | hex dump view for binary files |
+| `src/archive.rs` | archive listing: zip, tar and tarballs, deb, 7z; summary header and file tree |
 | `src/generate.rs` | `--completions` and `--man` (clap_complete, clap_mangen) |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
@@ -49,6 +50,7 @@ Run `make check` before handing work back.
 | `src/diagnose.rs` | `--diagnose` report |
 | `src/update.rs` | `--update` / `--check-update` from GitHub releases |
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |
+| `tests/archive.rs` | archive views with zip, tar, tar.gz, 7z and deb fixtures built in the test |
 | `tests/audio.rs` | audio view and `--play` errors, with a WAV generated in the test |
 | `tests/images.rs` | forced image output, captions, piped image bytes |
 | `tests/pdf.rs` | PDF view with hand-written PDFs: header, pages, text, piped bytes, malformed files |

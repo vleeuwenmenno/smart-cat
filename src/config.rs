@@ -46,6 +46,8 @@ pub enum Renderer {
     Log,
     /// PDF info header and pages as images or text.
     Pdf,
+    /// Summary and file tree of zip, tar, deb and 7z archives.
+    Archive,
 }
 
 impl fmt::Display for Renderer {
@@ -64,6 +66,7 @@ impl fmt::Display for Renderer {
             Renderer::Diff => "diff",
             Renderer::Log => "log",
             Renderer::Pdf => "pdf",
+            Renderer::Archive => "archive",
         })
     }
 }
@@ -174,6 +177,7 @@ pub struct Config {
     pub table: TableConfig,
     pub hexdump: HexdumpConfig,
     pub pdf: PdfConfig,
+    pub archive: ArchiveConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -219,6 +223,19 @@ impl Default for PdfConfig {
             pages: crate::pdf::PageSpec::default(),
             max_pages: 20,
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ArchiveConfig {
+    /// Entries shown in an archive listing; 0 shows all of them.
+    pub max_entries: usize,
+}
+
+impl Default for ArchiveConfig {
+    fn default() -> Self {
+        Self { max_entries: 500 }
     }
 }
 

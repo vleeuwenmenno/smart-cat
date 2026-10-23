@@ -83,6 +83,11 @@ pages = "1"
 # Most pages drawn as images per file (text output is not limited).
 max_pages = 20
 
+[archive]
+# Archives (zip, tar, tarballs, deb, 7z) show a summary and a file tree. Entries shown
+# before a "... more entries" footer; 0 shows every entry.
+max_entries = 500
+
 [update]
 # "stable" or "prerelease" (used by `scat --update`).
 channel = "stable"
@@ -95,6 +100,7 @@ channel = "stable"
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
 #   "video" (info view), "table" (CSV/TSV table), "diff" (coloured diff),
 #   "log" (coloured log levels), "hex" (hex dump), "pdf" (info and pages),
+#   "archive" (summary and file tree),
 #   "raw" (exactly cat)
 
 # [[rule]]

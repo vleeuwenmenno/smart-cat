@@ -5,6 +5,7 @@ use std::path::Path;
 
 use syntect::easy::HighlightLines;
 
+use crate::archive;
 use crate::audio;
 use crate::cat::{self, CatOptions, CatState};
 use crate::cli::Cli;
@@ -143,8 +144,15 @@ fn source_pageable(source: &Source, ctx: &Context) -> bool {
         return false;
     }
     // Compressed files are decoded later and may hold anything, images included.
-    if decompress::detect(&head).is_some() {
-        return false;
+    if let Some(format) = decompress::detect(&head) {
+        // A compressed tarball gets the archive listing, which pages like text.
+        let name = source.file_name();
+        if !decompress::is_tarball(name.as_deref(), &head, format) {
+            return false;
+        }
+        let mime = detect::detect(&head).mime;
+        let renderer = ctx.config.settings_for(name.as_deref(), &mime).renderer;
+        return matches!(renderer, Renderer::Auto | Renderer::Archive | Renderer::Hex);
     }
     let detected = detect::detect(&head);
     let file_name = source.file_name();
@@ -255,6 +263,8 @@ fn process<W: Write>(
         &head,
     );
 
+    // Archives (compressed tarballs included) are listed, not decoded as text.
+    let archive_format = archive::detect(&head, file_name.as_deref());
     let is_video = settings.renderer == Renderer::Auto && detected.mime.starts_with("video/");
     let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
     let as_markdown = match settings.renderer {
@@ -317,6 +327,10 @@ fn process<W: Write>(
             &head,
             delimited.unwrap_or(table::Delimiter::Sniff),
         ),
+        Renderer::Archive => render_archive(&mut input, out, ctx, source, archive_format),
+        Renderer::Auto if archive_format.is_some() => {
+            render_archive(&mut input, out, ctx, source, archive_format)
+        }
         Renderer::Hex => render_hex(&mut input, out, ctx),
         Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
         _ if as_markdown => {
@@ -778,6 +792,39 @@ fn render_pdf<W: Write>(
         plain: ctx.cli.plain,
     };
     crate::pdf::render(out, source, input, &opts)
+}
+
+/// Archive listing. Needs the format found by sniffing; `--archive` style forcing of a
+/// file that is not an archive reports an error instead of guessing.
+fn render_archive<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    source: &Source,
+    format: Option<archive::Format>,
+) -> io::Result<()> {
+    let Some(format) = format else {
+        return Err(io::Error::other("not a supported archive"));
+    };
+    let reader = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+    let (path, size) = match (source, input.kind) {
+        (Source::Path(path), InputKind::Regular { size }) => (Some(path.as_path()), Some(size)),
+        _ => (None, None),
+    };
+    let name = source.display_name();
+    let opts = archive::Options {
+        max_entries: ctx.config.archive.max_entries,
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        width: listing::terminal_width(),
+        max_scan_bytes: ctx.config.defaults.max_decompressed_bytes,
+    };
+    let source = archive::Source {
+        reader: Box::new(reader),
+        path,
+        size,
+    };
+    archive::render(out, format, &name, source, &opts)
 }
 
 fn render_text<W: Write>(
