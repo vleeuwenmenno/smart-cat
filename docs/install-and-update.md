@@ -52,6 +52,24 @@ make install        # builds and installs to ~/.local/bin/scat
 | `no stable release yet; the newest is pre-release vX` | only pre-releases exist | add `--pre` |
 | `no release asset at ...` | the release has no build for your CPU, or the tag does not exist | check the tag, or install from source |
 
+## Completions and man page
+
+`install.sh` and `make install` set these up for you. They run `scat --install-completions`, which writes:
+
+| For | File |
+|---|---|
+| fish (if installed) | `~/.config/fish/completions/scat.fish` |
+| bash (if installed) | `~/.local/share/bash-completion/completions/scat` |
+| zsh (if installed) | `~/.local/share/zsh/site-functions/_scat` |
+| `man scat` | `~/.local/share/man/man1/scat.1` |
+
+`XDG_CONFIG_HOME` and `XDG_DATA_HOME` are honoured. fish and bash pick the files up in a new shell. zsh needs that directory on `fpath`; scat prints the line to add to `~/.zshrc` when it writes the zsh file.
+
+- `scat --update` rewrites the files that are already installed, so completions always match the new flags.
+- `scat --uninstall-completions` removes them; `make uninstall` does this too.
+- `install.sh --no-completions` skips them.
+- To manage them yourself, print them with `scat --completions fish|bash|zsh|elvish|powershell` and `scat --man`.
+
 ## Updating
 
 ```sh

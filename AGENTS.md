@@ -34,11 +34,17 @@ Run `make check` before handing work back.
 | `src/highlight.rs` | syntect + two-face (bat's syntaxes and themes), colour reduction |
 | `src/audio.rs` + `src/waveform.rs` | audio info view (lofty tags, symphonia peaks, braille/ASCII waveform) |
 | `src/play.rs` | `--play`: hands audio and video to mpv |
+| `src/pager.rs` | paging: pager command parsing, decision, `Output` writer that holds back short output |
+| `src/header.rs` | file name rule printed before each file when several are rendered |
+| `src/hexdump.rs` | hex dump view for binary files |
+| `src/generate.rs` | `--completions` and `--man` (clap_complete, clap_mangen) |
 | `src/detect.rs` | text/binary and MIME detection from the first 8 KiB |
 | `src/input.rs` | opening files and stdin, file kinds |
 | `src/config.rs` + `src/config_template.toml` | TOML config, rules, `--init-config` |
 | `src/image/` | image view: decoding (image crate, resvg), kitty/sixel/block/ASCII encoders, sizing, animation; `image::show` for other renderers |
 | `src/term/` | colour depth, env hints, and the batched `/dev/tty` capability query |
+| `src/decompress.rs` | gzip/xz/zstd/bzip2 stream decoders (pure Rust) with a size cap |
+| `src/linestyle.rs` | per-line diff and log colouring |
 | `src/diagnose.rs` | `--diagnose` report |
 | `src/update.rs` | `--update` / `--check-update` from GitHub releases |
 | `tests/cat_compat.rs` | byte-for-byte comparison against GNU cat |

@@ -29,6 +29,10 @@ ansi = "keep-sgr"
 # Files larger than this are shown without syntax highlighting.
 max_highlight_bytes = 16777216
 
+# .gz, .xz, .zst and .bz2 files are decompressed when rendering. Output stops after this
+# many decompressed bytes (a guard against decompression bombs).
+max_decompressed_bytes = 1073741824
+
 # `scat` with no arguments, run from a terminal, lists the current directory. Set "stdin"
 # to read standard input like cat instead.
 no_args = "list"
@@ -36,12 +40,25 @@ no_args = "list"
 # A directory argument is listed when rendering. Set "error" for cat's "Is a directory".
 directories = "list"
 
+# Long text output goes through a pager when it does not fit the screen: "auto",
+# "always" or "never". The pager is $SCAT_PAGER, then $PAGER, then `less -RFX`.
+# Never used for images, media, or when output is piped. `scat --paging never` for one run.
+paging = "auto"
+
+# Show a rule with the file name before each file when you print several at once.
+# `scat -p` hides it for one run.
+headers = true
+
 [list]
 # "grid" (like ls) or "long" (one entry per line with size and age).
 style = "grid"
 
 # Show names starting with a dot. `scat --all` does this for one run.
 show_hidden = false
+
+[hexdump]
+# Binary files show a hex dump of this many leading bytes.
+max_bytes = 512
 
 [image]
 # How images are drawn: "auto" (best the terminal supports), "kitty", "sixel",
@@ -53,6 +70,11 @@ protocol = "auto"
 
 # Play animated GIF, WebP and PNG once (false shows the first frame only).
 animate = true
+
+[table]
+# CSV, TSV and PSV files are drawn as tables. Data rows shown before a "... more rows"
+# footer; 0 shows every row.
+max_rows = 200
 
 [pdf]
 # Pages shown when --pages is not given: "1", "1-3,7", "4-" or "all".
@@ -71,7 +93,9 @@ channel = "stable"
 #
 # renderer: "auto" (default), "code" (highlighted), "text" (no highlighting),
 #   "markdown" (rendered), "image" (draw as an image), "audio" (tags and waveform),
-#   "video" (info view), "pdf" (info and pages), "raw" (exactly cat)
+#   "video" (info view), "table" (CSV/TSV table), "diff" (coloured diff),
+#   "log" (coloured log levels), "hex" (hex dump), "pdf" (info and pages),
+#   "raw" (exactly cat)
 
 # [[rule]]
 # match = { ext = ["md", "txt"] }

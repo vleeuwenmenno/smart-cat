@@ -1,18 +1,26 @@
 //! Per-file dispatch: cat-compatible output or rendering.
 
 use std::io::{self, BufRead, BufReader, BufWriter, IsTerminal, Read, Write};
+use std::path::Path;
 
 use syntect::easy::HighlightLines;
 
 use crate::audio;
 use crate::cat::{self, CatOptions, CatState};
 use crate::cli::Cli;
-use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, Renderer};
+use crate::config::{AnsiMode, Config, Directories, FileSettings, ListStyle, PagingMode, Renderer};
+use crate::decompress;
 use crate::detect::{self, Kind, SNIFF_BYTES};
+use crate::header;
+use crate::hexdump;
 use crate::highlight::{self, Assets};
 use crate::input::{self, Input, InputKind, Source};
+use crate::json;
+use crate::linestyle;
 use crate::listing;
 use crate::markdown;
+use crate::pager;
+use crate::table;
 use crate::term::{self, ColorDepth, query};
 use crate::util::{TrackedWriter, human_size, io_message, read_line_capped};
 use crate::video;
@@ -28,9 +36,6 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
     let out_identity = input::stdout_identity();
 
     let mut ctx = Context::new(cli, config, stdout_tty);
-    let mut out = TrackedWriter::new(BufWriter::with_capacity(64 * 1024, stdout.lock()));
-    let mut cat_state = CatState::default();
-    let mut status = 0;
 
     let mut sources = Source::from_args(&cli.files);
     if cli.files.is_empty()
@@ -45,18 +50,55 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
             .filter(|s| matches!(s, Source::Path(p) if p.is_dir()))
             .count();
     }
+    ctx.show_headers =
+        render && stdout_tty && sources.len() > 1 && !cli.plain && config.defaults.headers;
 
+    // Decide on paging up front: only when every file is text-like (no graphics, no media).
+    let mode = cli.paging.unwrap_or(config.defaults.paging);
+    let decision = pager::decide(
+        mode,
+        stdout_tty,
+        render,
+        mode != PagingMode::Never && stdout_tty && render && all_pageable(&sources, &ctx),
+    );
+    let mut output = pager::Output::new(stdout.lock(), pager::plan(decision));
+    let paged = output.is_paged();
+    let status = {
+        let mut out = TrackedWriter::new(BufWriter::with_capacity(64 * 1024, &mut output));
+        process_all(&sources, render, out_identity, paged, &mut ctx, &mut out)
+    };
+    match output.finish() {
+        Err(err) if paged && err.kind() == io::ErrorKind::BrokenPipe => status,
+        Err(err) => {
+            eprintln!("scat: write error: {}", io_message(&err));
+            1
+        }
+        Ok(()) => status,
+    }
+}
+
+/// Whether an error is the pager having quit early: stop quietly, not a failure.
+fn pager_quit(paged: bool, err: &io::Error) -> bool {
+    paged && err.kind() == io::ErrorKind::BrokenPipe
+}
+
+fn process_all<W: Write>(
+    sources: &[Source],
+    render: bool,
+    out_identity: Option<(u64, u64)>,
+    paged: bool,
+    ctx: &mut Context,
+    out: &mut TrackedWriter<W>,
+) -> i32 {
+    let mut cat_state = CatState::default();
+    let mut status = 0;
     for source in sources {
-        let result = process(
-            &source,
-            render,
-            out_identity,
-            &mut ctx,
-            &mut out,
-            &mut cat_state,
-        );
+        let result = process(source, render, out_identity, ctx, out, &mut cat_state);
         if let Err(err) = result {
             if out.failed {
+                if pager_quit(paged, &err) {
+                    return 0;
+                }
                 eprintln!("scat: write error: {}", io_message(&err));
                 return 1;
             }
@@ -65,11 +107,88 @@ pub fn run(cli: &Cli, config: &Config) -> i32 {
             status = 1;
         }
     }
-    if let Err(err) = cat::finish(&mut out, &mut cat_state).and_then(|()| out.flush()) {
+    if let Err(err) = cat::finish(out, &mut cat_state).and_then(|()| out.flush()) {
+        if pager_quit(paged, &err) {
+            return 0;
+        }
         eprintln!("scat: write error: {}", io_message(&err));
         return 1;
     }
     status
+}
+
+/// True when every source is a file or directory that renders as plain text (or a hex
+/// dump), so a pager can show it. Standard input cannot be sniffed ahead of time.
+fn all_pageable(sources: &[Source], ctx: &Context) -> bool {
+    sources.iter().all(|source| source_pageable(source, ctx))
+}
+
+fn source_pageable(source: &Source, ctx: &Context) -> bool {
+    let Source::Path(path) = source else {
+        return false;
+    };
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if meta.is_dir() {
+        return ctx.config.defaults.directories == Directories::List;
+    }
+    if !meta.is_file() {
+        return false;
+    }
+    let mut head = Vec::new();
+    let sniffed = std::fs::File::open(path)
+        .and_then(|file| file.take(SNIFF_BYTES as u64).read_to_end(&mut head));
+    if sniffed.is_err() {
+        return false;
+    }
+    // Compressed files are decoded later and may hold anything, images included.
+    if decompress::detect(&head).is_some() {
+        return false;
+    }
+    let detected = detect::detect(&head);
+    let file_name = source.file_name();
+    let settings = ctx
+        .config
+        .settings_for(file_name.as_deref(), &detected.mime);
+    let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
+    let as_markdown = match settings.renderer {
+        Renderer::Markdown => true,
+        Renderer::Auto => markdown::is_markdown(file_name.as_deref(), language),
+        _ => false,
+    };
+    // Markdown may draw inline images, and graphics escapes must never reach a pager.
+    if as_markdown && markdown_has_images(path) {
+        return false;
+    }
+    pager::renderer_is_pageable(
+        settings.renderer,
+        &detected.kind,
+        &detected.mime,
+        crate::image::wants(&detected.mime, file_name.as_deref(), &head),
+        is_audio(&detected, file_name.as_deref()),
+    )
+}
+
+/// Whether a markdown file references an image (`![`), read up to 4 MiB.
+fn markdown_has_images(path: &std::path::Path) -> bool {
+    let mut text = Vec::new();
+    let read = std::fs::File::open(path).and_then(|f| f.take(4 << 20).read_to_end(&mut text));
+    read.is_err() || text.windows(2).any(|w| w == b"![")
+}
+
+/// The rule before a file when several are rendered, with a blank line between files.
+fn write_header<W: Write>(source: &Source, ctx: &mut Context, out: &mut W) -> io::Result<()> {
+    if ctx.printed > 0 {
+        out.write_all(b"\n")?;
+    }
+    ctx.printed += 1;
+    let name = match source {
+        Source::Stdin => "-".to_string(),
+        Source::Path(path) => path.to_string_lossy().into_owned(),
+    };
+    let width = listing::terminal_width();
+    out.write_all(header::line(&name, width, ctx.colors, ctx.utf8).as_bytes())
 }
 
 fn process<W: Write>(
@@ -95,14 +214,46 @@ fn process<W: Write>(
     if !render || input.kind == InputKind::Device {
         return write_cat(&mut input, out, &ctx.cat_options, cat_state);
     }
+    if ctx.show_headers {
+        write_header(source, ctx, out)?;
+    }
 
-    let head = input.reader.fill_buf()?;
-    let head = head[..head.len().min(SNIFF_BYTES)].to_vec();
-    let detected = detect::detect(&head);
-    let file_name = source.file_name();
-    let settings = ctx
+    let mut head = sniff(&mut input)?;
+    let mut detected = detect::detect(&head);
+    let mut file_name = source.file_name();
+    let mut settings = ctx
         .config
         .settings_for(file_name.as_deref(), &detected.mime);
+
+    // Single-stream .gz/.xz/.zst/.bz2: decode, then treat the inside like any file.
+    let mut truncated = None;
+    if settings.renderer != Renderer::Raw
+        && let Some(format) = decompress::detect(&head)
+        && !decompress::is_tarball(file_name.as_deref(), &head, format)
+    {
+        let outer = std::mem::replace(&mut input.reader, BufReader::new(Box::new(io::empty())));
+        let (reader, hit) = decompress::open(
+            format,
+            Box::new(outer),
+            ctx.config.defaults.max_decompressed_bytes,
+        )?;
+        input.reader = BufReader::with_capacity(64 * 1024, reader);
+        input.kind = InputKind::Stream;
+        input.identity = None;
+        truncated = Some(hit);
+        file_name = file_name.map(|name| decompress::inner_name(&name));
+        head = sniff(&mut input)?;
+        detected = detect::detect(&head);
+        settings = ctx
+            .config
+            .settings_for(file_name.as_deref(), &detected.mime);
+    }
+    ctx.text_kind = text_kind(
+        settings.renderer,
+        ctx.cli.language.as_deref().or(settings.language.as_deref()),
+        file_name.as_deref(),
+        &head,
+    );
 
     let is_video = settings.renderer == Renderer::Auto && detected.mime.starts_with("video/");
     let language = ctx.cli.language.as_deref().or(settings.language.as_deref());
@@ -112,7 +263,15 @@ fn process<W: Write>(
         _ => false,
     };
 
-    match settings.renderer {
+    let delimited = table::delimiter_for(file_name.as_deref(), language);
+    if matches!(settings.renderer, Renderer::Auto | Renderer::Code)
+        && detected.kind == Kind::Text
+        && json::is_json(file_name.as_deref(), language)
+    {
+        json::prettify_input(&mut input, &head)?;
+    }
+
+    let result = match settings.renderer {
         Renderer::Video => render_video(source, &input, out, ctx, &detected.mime),
         Renderer::Auto if is_video => render_video(source, &input, out, ctx, &detected.mime),
         Renderer::Raw => write_cat(&mut input, out, &ctx.cat_options, cat_state),
@@ -123,6 +282,7 @@ fn process<W: Write>(
             &detected.mime,
             ctx.colors,
             ctx.utf8,
+            &mut || ctx.image_screen(),
         ),
         Renderer::Auto if is_audio(&detected, file_name.as_deref()) => audio::render(
             out,
@@ -131,6 +291,7 @@ fn process<W: Write>(
             &detected.mime,
             ctx.colors,
             ctx.utf8,
+            &mut || ctx.image_screen(),
         ),
         Renderer::Pdf => render_pdf(&mut input, out, ctx, source),
         Renderer::Auto if crate::pdf::wants(&detected.mime, &head) => {
@@ -140,24 +301,99 @@ fn process<W: Write>(
         Renderer::Auto if crate::image::wants(&detected.mime, file_name.as_deref(), &head) => {
             render_image(&mut input, out, ctx, source, &head)
         }
-        Renderer::Auto if detected.kind == Kind::Binary => {
-            out.flush()?;
-            let size = match input.kind {
-                InputKind::Regular { size } => format!(", {}", human_size(size)),
-                _ => String::new(),
-            };
-            eprintln!(
-                "scat: {}: binary file ({}{size}) not shown; use --raw to print it",
-                source.display_name(),
-                detected.mime
-            );
-            Ok(())
-        }
+        Renderer::Table => render_table(
+            &mut input,
+            out,
+            ctx,
+            &settings,
+            &head,
+            delimited.unwrap_or(table::Delimiter::Sniff),
+        ),
+        Renderer::Auto if detected.kind == Kind::Text && delimited.is_some() => render_table(
+            &mut input,
+            out,
+            ctx,
+            &settings,
+            &head,
+            delimited.unwrap_or(table::Delimiter::Sniff),
+        ),
+        Renderer::Hex => render_hex(&mut input, out, ctx),
+        Renderer::Auto if detected.kind == Kind::Binary => render_hex(&mut input, out, ctx),
         _ if as_markdown => {
-            render_markdown(&mut input, out, ctx, &settings, file_name.as_deref(), &head)
+            let doc = (&settings, file_name.as_deref(), source);
+            render_markdown(&mut input, out, ctx, doc, &head)
         }
         _ => render_text(&mut input, out, ctx, &settings, file_name.as_deref(), &head),
+    };
+    if truncated.is_some_and(|hit| hit.get()) {
+        out.flush()?;
+        eprintln!(
+            "scat: {}: decompressed output stopped at {} (max_decompressed_bytes)",
+            source.display_name(),
+            human_size(ctx.config.defaults.max_decompressed_bytes)
+        );
     }
+    result
+}
+
+/// The first bytes of the input for type detection, left unconsumed in the reader.
+fn sniff(input: &mut Input) -> io::Result<Vec<u8>> {
+    let head = input.reader.fill_buf()?;
+    Ok(head[..head.len().min(SNIFF_BYTES)].to_vec())
+}
+
+/// Whether a text file gets diff or log colouring: forced by the renderer setting or
+/// `-l diff|patch|log`, by extension, or (diffs, and logs without a known extension)
+/// by what the first lines look like.
+pub fn text_kind(
+    renderer: Renderer,
+    language: Option<&str>,
+    file_name: Option<&str>,
+    head: &[u8],
+) -> Option<linestyle::Kind> {
+    use linestyle::Kind;
+    match renderer {
+        Renderer::Diff => return Some(Kind::Diff),
+        Renderer::Log => return Some(Kind::Log),
+        Renderer::Auto => {}
+        _ => return None,
+    }
+    let ext = file_name
+        .and_then(|n| n.rsplit_once('.'))
+        .map(|(_, e)| e.to_ascii_lowercase());
+    let named = language
+        .map(str::to_ascii_lowercase)
+        .or(ext.clone())
+        .unwrap_or_default();
+    match named.as_str() {
+        "diff" | "patch" => return Some(Kind::Diff),
+        "log" => return Some(Kind::Log),
+        _ => {}
+    }
+    if language.is_some() || markdown::is_markdown(file_name, language) {
+        return None;
+    }
+    if linestyle::looks_like_diff(head) {
+        return Some(Kind::Diff);
+    }
+    let unnamed = ext
+        .as_deref()
+        .is_none_or(|e| matches!(e, "txt" | "out" | "err"));
+    (unnamed && linestyle::looks_like_log(head)).then_some(Kind::Log)
+}
+
+/// Hex dump of the first `[hexdump] max_bytes` bytes.
+fn render_hex<W: Write>(input: &mut Input, out: &mut W, ctx: &Context) -> io::Result<()> {
+    let total = match input.kind {
+        InputKind::Regular { size } => Some(size),
+        _ => None,
+    };
+    let opts = hexdump::Options {
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        max_bytes: ctx.config.hexdump.max_bytes.max(16),
+    };
+    hexdump::render(out, &mut input.reader, total, &opts)
 }
 
 /// Video info view. ffprobe opens the file by path, so standard input and pipes only
@@ -166,7 +402,7 @@ fn render_video<W: Write>(
     source: &Source,
     input: &Input,
     out: &mut W,
-    ctx: &Context,
+    ctx: &mut Context,
     mime: &str,
 ) -> io::Result<()> {
     let (Source::Path(path), InputKind::Regular { size }) = (source, input.kind) else {
@@ -178,7 +414,29 @@ fn render_video<W: Write>(
         return Ok(());
     };
     let name = source.file_name().unwrap_or_else(|| source.display_name());
-    video::render(out, path, &name, Some(size), mime, ctx.colors)
+    let colors = ctx.colors;
+    video::render(out, path, &name, Some(size), mime, colors, &mut || {
+        ctx.image_screen()
+    })
+}
+
+fn render_table<W: Write>(
+    input: &mut Input,
+    out: &mut W,
+    ctx: &Context,
+    settings: &FileSettings,
+    head: &[u8],
+    delimiter: table::Delimiter,
+) -> io::Result<()> {
+    let cli = ctx.cli;
+    let opts = table::Options {
+        width: listing::terminal_width(),
+        colors: ctx.colors,
+        utf8: ctx.utf8,
+        line_numbers: !cli.plain && (cli.number || cli.number_nonblank || settings.line_numbers),
+        max_rows: ctx.config.table.max_rows,
+    };
+    table::render(&mut input.reader, head, delimiter, &opts, out)
 }
 
 fn list_directory<W: Write>(
@@ -207,6 +465,7 @@ fn list_directory<W: Write>(
         writeln!(out, "{}:", listing::safe_name(&path.to_string_lossy()))?;
     }
     ctx.listed += 1;
+    ctx.printed += 1;
     out.write_all(&buf)
 }
 
@@ -222,8 +481,7 @@ fn render_markdown<W: Write>(
     input: &mut Input,
     out: &mut W,
     ctx: &mut Context,
-    settings: &FileSettings,
-    file_name: Option<&str>,
+    (settings, file_name, source): (&FileSettings, Option<&str>, &Source),
     head: &[u8],
 ) -> io::Result<()> {
     let limit = ctx.config.defaults.max_highlight_bytes;
@@ -250,7 +508,11 @@ fn render_markdown<W: Write>(
         light,
         tab_width: settings.tab_width,
     };
+    // Both callbacks need the context; they never run at the same time.
+    let ctx = std::cell::RefCell::new(ctx);
     let mut highlight = |lang: &str, code: &str| -> Option<Vec<Vec<u8>>> {
+        let mut guard = ctx.borrow_mut();
+        let ctx: &mut Context = &mut guard;
         let theme_name = ctx.theme_name(settings);
         let assets = ctx.assets.get_or_insert_with(Assets::load);
         let syntax = assets.find_syntax(Some(lang), None, "")?;
@@ -282,7 +544,56 @@ fn render_markdown<W: Write>(
         }
         Some(lines)
     };
-    out.write_all(&markdown::render(&text, &opts, &mut highlight))
+    // Image paths are relative to the document's directory; standard input has none,
+    // so its images keep their placeholders.
+    let base = match source {
+        Source::Path(path) => Some(path.parent().map(Path::to_path_buf).unwrap_or_default()),
+        Source::Stdin => None,
+    };
+    let mut images = |dest: &str, max_cols: u16| -> Option<crate::image::Drawn> {
+        let path = markdown::local_image_path(base.as_deref()?, dest)?;
+        let screen = ctx.borrow_mut().image_screen();
+        markdown_image(&screen, &path, max_cols)
+    };
+    let rendered = markdown::render_with_images(&text, &opts, &mut highlight, &mut images);
+    out.write_all(&rendered)
+}
+
+/// Markdown images are at most this many rows high.
+const MARKDOWN_IMAGE_ROWS: u16 = 15;
+/// Larger image files in markdown documents are left as placeholders.
+const MARKDOWN_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Draws a local image for a markdown document with kitty, sixel or blocks. ASCII
+/// output, unreadable files and decoding errors keep the placeholder.
+fn markdown_image(
+    screen: &crate::image::Screen,
+    path: &Path,
+    max_cols: u16,
+) -> Option<crate::image::Drawn> {
+    if screen.method == crate::image::Method::Ascii {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut data = Vec::new();
+    file.take(MARKDOWN_IMAGE_BYTES + 1)
+        .read_to_end(&mut data)
+        .ok()?;
+    if data.len() as u64 > MARKDOWN_IMAGE_BYTES {
+        return None;
+    }
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    let head = &data[..data.len().min(SNIFF_BYTES)];
+    let svg = crate::image::is_svg(name.as_deref(), head);
+    let opts = crate::image::ShowOptions {
+        max_cols: Some(max_cols),
+        max_rows: Some(MARKDOWN_IMAGE_ROWS),
+        ..Default::default()
+    };
+    crate::image::draw_encoded(screen, data, svg, &opts).ok()
 }
 
 fn write_cat<W: Write>(
@@ -314,6 +625,12 @@ struct Context<'a> {
     /// Directory arguments being listed, and how many are done: headers for several.
     dir_args: usize,
     listed: usize,
+    /// Print a rule with the file name before each file (several files, terminal).
+    show_headers: bool,
+    /// Files and listings printed so far, for the blank line between headed files.
+    printed: usize,
+    /// Diff or log colouring for the file being rendered.
+    text_kind: Option<linestyle::Kind>,
 }
 
 impl<'a> Context<'a> {
@@ -333,6 +650,9 @@ impl<'a> Context<'a> {
             warned_theme: false,
             dir_args: 0,
             listed: 0,
+            show_headers: false,
+            printed: 0,
+            text_kind: None,
         }
     }
 
@@ -482,7 +802,14 @@ fn render_text<W: Write>(
         (AnsiMode::KeepSgr, false) => SgrMode::Strip,
     };
 
-    let want_highlight = ctx.colors && settings.renderer != Renderer::Text && small_enough;
+    let mut styler = ctx
+        .text_kind
+        .filter(|_| ctx.colors)
+        .map(linestyle::Styler::new);
+    let want_highlight = ctx.colors
+        && settings.renderer != Renderer::Text
+        && small_enough
+        && ctx.text_kind.is_none();
     let theme_name = if want_highlight {
         Some(ctx.theme_name(settings))
     } else {
@@ -595,6 +922,28 @@ fn render_text<W: Write>(
                 }
                 Err(_) => highlighter = None,
             }
+        }
+        if !highlighted
+            && at_line_start
+            && !text.contains('\x1b')
+            && let Some(styler) = styler.as_mut()
+        {
+            let body = text.strip_suffix('\n').unwrap_or(&text);
+            let body = body.strip_suffix('\r').unwrap_or(body);
+            for (range, sgr) in styler.spans(body) {
+                encoded.extend_from_slice(sgr.as_bytes());
+                sanitize(
+                    &mut encoded,
+                    &body.as_bytes()[range],
+                    SgrMode::Escape,
+                    tab_width,
+                    &mut column,
+                );
+                if !sgr.is_empty() {
+                    encoded.extend_from_slice(RESET);
+                }
+            }
+            highlighted = true;
         }
         if !highlighted {
             let body = text.strip_suffix('\n').unwrap_or(&text);

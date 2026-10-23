@@ -36,6 +36,14 @@ pub enum Renderer {
     Markdown,
     /// Decode and draw as an image (kitty, sixel or text blocks).
     Image,
+    /// Box-drawn table for CSV, TSV and PSV files.
+    Table,
+    /// Hex dump of the first bytes.
+    Hex,
+    /// Coloured unified diff.
+    Diff,
+    /// Coloured log levels and timestamps.
+    Log,
     /// PDF info header and pages as images or text.
     Pdf,
 }
@@ -51,9 +59,26 @@ impl fmt::Display for Renderer {
             Renderer::Audio => "audio",
             Renderer::Markdown => "markdown",
             Renderer::Image => "image",
+            Renderer::Table => "table",
+            Renderer::Hex => "hex",
+            Renderer::Diff => "diff",
+            Renderer::Log => "log",
             Renderer::Pdf => "pdf",
         })
     }
+}
+
+/// When rendered output goes through a pager.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum PagingMode {
+    /// Page text output once it is longer than the screen
+    #[default]
+    Auto,
+    /// Page all text output
+    Always,
+    /// Never page
+    Never,
 }
 
 /// What `scat` does with no file arguments when a person is at the terminal.
@@ -146,7 +171,37 @@ pub struct Config {
     pub update: UpdateConfig,
     pub list: ListConfig,
     pub image: ImageConfig,
+    pub table: TableConfig,
+    pub hexdump: HexdumpConfig,
     pub pdf: PdfConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TableConfig {
+    /// Data rows shown for CSV/TSV files; 0 shows all of them.
+    pub max_rows: usize,
+}
+
+impl Default for TableConfig {
+    fn default() -> Self {
+        Self { max_rows: 200 }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct HexdumpConfig {
+    /// How many leading bytes of a binary file the hex dump shows.
+    pub max_bytes: usize,
+}
+
+impl Default for HexdumpConfig {
+    fn default() -> Self {
+        Self {
+            max_bytes: crate::hexdump::DEFAULT_MAX_BYTES,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -186,8 +241,12 @@ pub struct Defaults {
     pub tab_width: usize,
     pub ansi: AnsiMode,
     pub max_highlight_bytes: u64,
+    pub max_decompressed_bytes: u64,
     pub no_args: NoArgs,
     pub directories: Directories,
+    pub paging: PagingMode,
+    /// Print a rule with the file name before each file when several are rendered.
+    pub headers: bool,
 }
 
 impl Default for Defaults {
@@ -201,8 +260,11 @@ impl Default for Defaults {
             tab_width: 4,
             ansi: AnsiMode::KeepSgr,
             max_highlight_bytes: 16 * 1024 * 1024,
+            max_decompressed_bytes: 1024 * 1024 * 1024,
             no_args: NoArgs::List,
             directories: Directories::List,
+            paging: PagingMode::Auto,
+            headers: true,
         }
     }
 }

@@ -20,8 +20,10 @@ type Rgb = [u8; 3];
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
     pub depth: ColorDepth,
-    /// Background that partly transparent pixels are blended onto.
-    pub background: Rgb,
+    /// Background that partly transparent pixels are blended onto, when the terminal
+    /// reported it. Without it, such pixels keep their own colour: blending onto a
+    /// guessed black looks wrong on light terminals.
+    pub background: Option<Rgb>,
     /// Emit SGR colours at all (ASCII without colour is a plain ramp).
     pub colors: bool,
 }
@@ -31,13 +33,12 @@ impl Palette {
         if p[3] < ALPHA_CUTOFF {
             return None;
         }
+        let Some(bg) = self.background else {
+            return Some([p[0], p[1], p[2]]);
+        };
         let a = u16::from(p[3]);
         let mix = |c: u8, bg: u8| ((u16::from(c) * a + u16::from(bg) * (255 - a)) / 255) as u8;
-        Some([
-            mix(p[0], self.background[0]),
-            mix(p[1], self.background[1]),
-            mix(p[2], self.background[2]),
-        ])
+        Some([mix(p[0], bg[0]), mix(p[1], bg[1]), mix(p[2], bg[2])])
     }
 }
 
@@ -279,7 +280,7 @@ mod tests {
     fn pal(colors: bool) -> Palette {
         Palette {
             depth: ColorDepth::TrueColor,
-            background: [0, 0, 0],
+            background: Some([0, 0, 0]),
             colors,
         }
     }
@@ -312,6 +313,22 @@ mod tests {
             half_block_cell(None, Some([1, 2, 3])),
             (Some([1, 2, 3]), None, "▄")
         );
+    }
+
+    #[test]
+    fn partial_alpha_blends_onto_the_reported_background_only() {
+        let px = Rgba([200, 100, 0, 128]);
+        let white = Palette {
+            background: Some([255, 255, 255]),
+            ..pal(true)
+        };
+        assert_eq!(white.blend(&px), Some([227, 177, 127]));
+        let unknown = Palette {
+            background: None,
+            ..pal(true)
+        };
+        assert_eq!(unknown.blend(&px), Some([200, 100, 0]));
+        assert_eq!(unknown.blend(&Rgba([1, 2, 3, 10])), None);
     }
 
     #[test]

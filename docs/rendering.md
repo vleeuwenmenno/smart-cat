@@ -11,12 +11,32 @@ scat reads the first 8 KiB of each file to decide what it is:
 | markdown (`.md`, `.markdown`, `.mdown`, `.mkd`) | [rendered](markdown.md) |
 | text with a known language | [syntax highlighted](syntax-highlighting.md) |
 | other text | printed, with control characters made safe |
+| `.gz` `.xz` `.zst` `.bz2` | [decompressed](compressed-files.md), then the inside is detected again |
+| diffs, logs | [coloured](diffs-and-logs.md) |
 | audio (`audio/*`, plus `.wv .ape .mpc .spx .aac` by name) | [tag table and waveform](audio.md) |
-| binary | not printed; a note on stderr names the type and size (`--raw` prints it anyway) |
+| other binary | [hex dump](#hex-dump) of the first 512 bytes (`--raw` prints the bytes) |
 
 Text means no NUL bytes and at most 5% invalid UTF-8, so Latin-1 files still count as text. The type comes from magic bytes (`infer`), for example `image/png` or `application/x-executable`.
 
-A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `markdown`, `audio`, `video` or `raw`.
+A [config rule](configuration.md) can pick another renderer per file: `code`, `text`, `markdown`, `image`, `audio`, `video`, `table`, `diff`, `log`, `hex` or `raw`.
+
+Long text output is [paged](paging.md), and several files each get a header rule.
+
+## Hex dump
+
+Binary files that no other renderer claims (executables, archives, unknown data) show their first bytes as a dump:
+
+```
+00000000  7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  │·ELF············│
+…
+… 12.3 MiB more, use --raw for bytes
+```
+
+- an offset gutter, 16 bytes per line in two groups of 8, and an ASCII pane (`·` for bytes that are not printable; `.` and `|` without a UTF-8 locale);
+- with colours on, bytes are coloured by class: NUL dim, printable ASCII cyan, whitespace green, everything else yellow;
+- 512 bytes by default; `[hexdump] max_bytes` in the [config](configuration.md) changes it;
+- when the file is longer, a dim last line says how much is left. `scat --raw FILE` or a pipe prints the real bytes;
+- `renderer = "hex"` in a rule shows any file this way. Images, audio and video keep their own views.
 
 ## Layout
 

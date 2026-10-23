@@ -24,15 +24,17 @@ scat song.flac              # audio tags and waveform; --play plays it with mpv
 scat -p main.rs             # plain: no line numbers
 scat README.md              # rendered markdown, wrapped to the terminal
 scat                        # alone in a terminal: list the directory
+scat data.csv               # a table fitted to the terminal; minified JSON is pretty-printed
 scat clip.mp4               # video info (needs ffprobe)
 scat photo.png              # the image itself (kitty, sixel or Unicode blocks)
 scat doc.pdf --pages 2-4    # PDF info and pages; --text for the text
+scat app.log.gz             # decompressed, log levels coloured (diffs too: scat x.patch)
 scat file.txt | grep foo    # piped: identical to cat
 scat --diagnose             # what scat detected about your terminal
 scat --init-config          # write ~/.config/scat/config.toml
 ```
 
-All of `cat`'s flags work (`-n -b -s -A -v -E -T -e -t`).
+All of `cat`'s flags work (`-n -b -s -A -v -E -T -e -t`). Shell completions: `scat --completions fish > ~/.config/fish/completions/scat.fish` (also bash, zsh).
 
 ## Docs
 

@@ -14,6 +14,7 @@ set -eu
 REPO="${SCAT_REPO:-vleeuwenmenno/smart-cat}"
 INSTALL_DIR="${SCAT_INSTALL_DIR:-$HOME/.local/bin}"
 PRE=0
+COMPLETIONS=1
 VERSION=""
 TMP=""
 STAGED=""
@@ -33,6 +34,7 @@ usage() {
     say "  --pre          install the newest release, including pre-releases"
     say "  --version TAG  install a specific release, e.g. v0.2.0"
     say "  --dir DIR      install into DIR (default: \$SCAT_INSTALL_DIR or ~/.local/bin)"
+    say "  --no-completions  skip shell completions and the man page"
 }
 
 # The whole script is a function called on the last line, so a download cut short
@@ -41,6 +43,7 @@ main() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --pre) PRE=1 ;;
+            --no-completions) COMPLETIONS=0 ;;
             --version)
                 [ $# -ge 2 ] || die "--version needs a tag"
                 VERSION="$2"
@@ -154,6 +157,11 @@ main() {
     STAGED=""
 
     say "installed $NEW_VERSION to $INSTALL_DIR/scat"
+
+    if [ "$COMPLETIONS" = 1 ]; then
+        "$INSTALL_DIR/scat" --install-completions ||
+            say "warning: completions not installed; run: scat --install-completions" >&2
+    fi
 
     case ":$PATH:" in
         *":$INSTALL_DIR:"*) ;;

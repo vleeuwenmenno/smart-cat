@@ -2,17 +2,25 @@ mod audio;
 mod cat;
 mod cli;
 mod config;
+mod decompress;
 mod detect;
 mod diagnose;
+mod generate;
+mod header;
+mod hexdump;
 mod highlight;
 mod image;
 mod input;
+mod json;
 mod kv;
+mod linestyle;
 mod listing;
 mod markdown;
+mod pager;
 mod pdf;
 mod play;
 mod render;
+mod table;
 mod term;
 mod update;
 mod util;
@@ -40,6 +48,21 @@ fn main() {
 }
 
 fn run(cli: &Cli) -> i32 {
+    if let Some(shell) = cli.completions {
+        return generate::completions(shell);
+    }
+    if cli.man {
+        return generate::man();
+    }
+    if cli.install_completions {
+        return generate::install(generate::Mode::Install);
+    }
+    if cli.uninstall_completions {
+        return generate::install(generate::Mode::Uninstall);
+    }
+    if cli.refresh_completions {
+        return generate::install(generate::Mode::Refresh);
+    }
     let loaded = config::load(cli.config.as_deref(), cli.no_config);
     for warning in &loaded.warnings {
         eprintln!("scat: {warning}");

@@ -1,19 +1,29 @@
-//! Video info view: container, duration, bitrate and streams, read with `ffprobe`.
+//! Video info view: a poster frame (`ffmpeg`), then container, duration, bitrate and
+//! streams, read with `ffprobe`.
 
+use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::image::{self, Screen, ShowOptions};
 use crate::kv;
 use crate::util::{human_size, which};
 
-/// ffprobe is killed when it runs longer than this.
+/// ffprobe and ffmpeg are killed when they run longer than this.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Upper bound for ffprobe's JSON, so a misbehaving binary cannot fill memory.
 const MAX_PROBE_OUTPUT: u64 = 16 * 1024 * 1024;
+/// Upper bound for the poster frame PNG.
+const MAX_FRAME_OUTPUT: u64 = 64 * 1024 * 1024;
+/// The poster frame is taken this far into the video.
+const POSTER_AT: f64 = 0.10;
+/// Poster frames may be this wide; the height limit (20 rows, a third of the
+/// terminal) is the same as for cover art.
+const POSTER_MAX_COLS: u16 = 80;
 
 const HINT_MISSING: &str = "install ffmpeg (ffprobe) for stream details";
 const HINT_FAILED: &str = "ffprobe could not read this file";
@@ -26,7 +36,9 @@ enum Probe {
     Info(Value),
 }
 
-/// Prints the info view for a video file.
+/// Prints the info view for a video file: a poster frame when `ffmpeg` is installed
+/// and ffprobe found a video stream, then the table. `screen` is called only when a
+/// frame was extracted, since it may query the terminal.
 pub fn render<W: Write>(
     out: &mut W,
     path: &Path,
@@ -34,8 +46,15 @@ pub fn render<W: Write>(
     size: Option<u64>,
     mime: &str,
     colors: bool,
+    screen: &mut dyn FnMut() -> Screen,
 ) -> io::Result<()> {
     let probe = probe(path);
+    if let Probe::Info(json) = &probe
+        && has_video(json)
+        && let Some(png) = poster_frame(path, duration(json))
+    {
+        draw_poster(out, &screen(), png)?;
+    }
     let (rows, hint) = match &probe {
         Probe::Info(json) => (rows_from_json(json, size), None),
         Probe::Missing => (basic_rows(mime, size), Some(HINT_MISSING)),
@@ -61,35 +80,42 @@ fn basic_rows(mime: &str, size: Option<u64>) -> Vec<(&'static str, String)> {
     ]
 }
 
-fn probe(path: &Path) -> Probe {
-    let Some(ffprobe) = which("ffprobe") else {
-        return Probe::Missing;
-    };
-    // The `file:` prefix stops ffprobe from reading the name as a URL or an option.
-    let mut target = std::ffi::OsString::from("file:");
+/// `file:<absolute path>`: the prefix stops ffmpeg tools from reading the name as a
+/// URL or an option.
+fn ff_target(path: &Path) -> OsString {
+    let mut target = OsString::from("file:");
     match std::path::absolute(path) {
         Ok(abs) => target.push(abs),
         Err(_) => target.push(path),
     }
-    let child = Command::new(ffprobe)
-        .args(["-v", "error", "-print_format", "json"])
-        .args(["-show_format", "-show_streams", "-i"])
-        .arg(target)
+    target
+}
+
+enum Run {
+    Done(ExitStatus, Vec<u8>),
+    Failed,
+    TimedOut,
+}
+
+/// Runs `cmd` with stdin and stderr closed, collecting at most `max` bytes of stdout;
+/// kills it after [`PROBE_TIMEOUT`].
+fn run(mut cmd: Command, max: u64) -> Run {
+    let child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn();
     let Ok(mut child) = child else {
-        return Probe::Failed;
+        return Run::Failed;
     };
     let Some(stdout) = child.stdout.take() else {
         let _ = child.kill();
         let _ = child.wait();
-        return Probe::Failed;
+        return Run::Failed;
     };
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
-        let _ = stdout.take(MAX_PROBE_OUTPUT).read_to_end(&mut buf);
+        let _ = stdout.take(max).read_to_end(&mut buf);
         buf
     });
 
@@ -101,7 +127,7 @@ fn probe(path: &Path) -> Probe {
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = reader.join();
-                return Probe::TimedOut;
+                return Run::TimedOut;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(_) => break None,
@@ -109,8 +135,89 @@ fn probe(path: &Path) -> Probe {
     };
     let buf = reader.join().unwrap_or_default();
     match status {
-        Some(status) if status.success() => parse(&buf).map_or(Probe::Failed, Probe::Info),
+        Some(status) => Run::Done(status, buf),
+        None => Run::Failed,
+    }
+}
+
+fn probe(path: &Path) -> Probe {
+    let Some(ffprobe) = which("ffprobe") else {
+        return Probe::Missing;
+    };
+    let mut cmd = Command::new(ffprobe);
+    cmd.args(["-v", "error", "-print_format", "json"])
+        .args(["-show_format", "-show_streams", "-i"])
+        .arg(ff_target(path));
+    match run(cmd, MAX_PROBE_OUTPUT) {
+        Run::Done(status, buf) if status.success() => {
+            parse(&buf).map_or(Probe::Failed, Probe::Info)
+        }
+        Run::TimedOut => Probe::TimedOut,
         _ => Probe::Failed,
+    }
+}
+
+/// Whether ffprobe saw a real video stream (not only an attached cover picture).
+fn has_video(json: &Value) -> bool {
+    json.get("streams")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|s| text(s, "codec_type").as_deref() == Some("video") && !is_cover_art(s))
+}
+
+fn duration(json: &Value) -> Option<f64> {
+    json.get("format")
+        .and_then(|f| number(f, "duration"))
+        .filter(|d| *d > 0.0)
+}
+
+/// Where the poster frame is taken: [`POSTER_AT`] of the duration, as ffmpeg's
+/// `-ss` seconds. `None` (no duration) means the first frame.
+fn poster_time(duration: Option<f64>) -> Option<String> {
+    duration.map(|d| format!("{:.3}", d * POSTER_AT))
+}
+
+/// One frame as PNG, from `ffmpeg` when it is installed. Any failure means no poster.
+fn poster_frame(path: &Path, duration: Option<f64>) -> Option<Vec<u8>> {
+    let ffmpeg = which("ffmpeg")?;
+    let mut cmd = Command::new(ffmpeg);
+    cmd.args(["-nostdin", "-v", "error"]);
+    if let Some(at) = poster_time(duration) {
+        cmd.arg("-ss").arg(at);
+    }
+    cmd.arg("-i")
+        .arg(ff_target(path))
+        .args(["-an", "-sn", "-frames:v", "1"])
+        .args(["-f", "image2pipe", "-vcodec", "png", "-"]);
+    match run(cmd, MAX_FRAME_OUTPUT + 1) {
+        Run::Done(status, png)
+            if status.success() && !png.is_empty() && png.len() as u64 <= MAX_FRAME_OUTPUT =>
+        {
+            Some(png)
+        }
+        _ => None,
+    }
+}
+
+/// Draws the poster frame above the table. ASCII output and tiny terminals get none.
+fn draw_poster<W: Write>(out: &mut W, screen: &Screen, png: Vec<u8>) -> io::Result<()> {
+    if screen.method == image::Method::Ascii {
+        return Ok(());
+    }
+    let Some((max_cols, max_rows)) =
+        image::size::thumbnail_box(screen.cols, screen.rows, POSTER_MAX_COLS)
+    else {
+        return Ok(());
+    };
+    let opts = ShowOptions {
+        max_cols: Some(max_cols),
+        max_rows: Some(max_rows),
+        ..Default::default()
+    };
+    match image::draw_encoded(screen, png, false, &opts) {
+        Ok(drawn) => drawn.write(out),
+        Err(_) => Ok(()),
     }
 }
 
@@ -425,6 +532,21 @@ mod tests {
         assert!(parse(b"not json").is_none());
         assert!(parse(b"{}").is_none());
         assert!(parse(br#"{"streams": [], "format": {}}"#).is_some());
+    }
+
+    #[test]
+    fn poster_is_taken_at_a_tenth() {
+        assert_eq!(poster_time(Some(3725.4)).as_deref(), Some("372.540"));
+        assert_eq!(poster_time(None), None);
+        let json: Value = serde_json::from_str(SAMPLE).unwrap();
+        assert!(has_video(&json));
+        assert_eq!(duration(&json), Some(3725.4));
+        let cover_only: Value = serde_json::from_str(
+            r#"{"streams": [{"codec_type": "video", "disposition": {"attached_pic": 1}},
+                            {"codec_type": "audio"}]}"#,
+        )
+        .unwrap();
+        assert!(!has_video(&cover_only));
     }
 
     #[test]

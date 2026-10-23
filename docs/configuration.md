@@ -28,8 +28,11 @@ Command line flags, then `SCAT_*` environment variables, then matching `[[rule]]
 | `tab_width` | `4` | tab expansion when rendering; `0` keeps tabs |
 | `ansi` | `"keep-sgr"` | escape sequences in files: `"keep-sgr"` keeps colours, `"escape"` shows them as `^[` |
 | `max_highlight_bytes` | `16777216` | larger files are not highlighted |
+| `max_decompressed_bytes` | `1073741824` | [decompression](compressed-files.md) stops after this many bytes |
 | `no_args` | `"list"` | `scat` with no arguments, run from a terminal: `"list"` lists the current directory, `"stdin"` reads stdin like cat |
 | `directories` | `"list"` | directory arguments when rendering: `"list"` or `"error"` (cat's `Is a directory`) |
+| `paging` | `"auto"` | `"auto"` pages long text output, `"always"`, `"never"`; see [paging.md](paging.md) (`--paging` for one run) |
+| `headers` | `true` | a rule with the file name before each file when several are rendered (`-p` hides it for one run) |
 
 ## `[list]`
 
@@ -47,6 +50,18 @@ See [directory-listing.md](directory-listing.md).
 | `protocol` | `"auto"` | `"auto"`, `"kitty"`, `"sixel"`, `"blocks"`, `"sextants"` or `"ascii"`; see [images.md](images.md) |
 | `max_height` | unset | maximum image height in rows; unset means the terminal height minus 4 (at least 10) |
 | `animate` | `true` | play animated GIF/WebP/PNG once; `false` shows the first frame |
+
+## `[table]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_rows` | `200` | data rows shown for CSV/TSV/PSV files before the "more rows" footer; `0` shows all; see [data-files.md](data-files.md) |
+
+## `[hexdump]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max_bytes` | `512` | leading bytes of a binary file shown as a [hex dump](rendering.md#hex-dump) (at least 16) |
 
 ## `[pdf]`
 
@@ -97,7 +112,7 @@ Settings a rule can change:
 
 | Key | Values |
 |---|---|
-| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"raw"` (exactly cat) |
+| `renderer` | `"auto"`, `"code"` (highlight), `"text"` (no highlight), `"markdown"` ([rendered](markdown.md)), `"image"` (draw as an image, see [images.md](images.md)), `"audio"` (tags and waveform, see [audio.md](audio.md)), `"video"` (info view, see [video.md](video.md)), `"table"` (CSV/TSV table, see [data-files.md](data-files.md)), `"diff"` ([coloured diff](diffs-and-logs.md)), `"log"` ([coloured levels and timestamps](diffs-and-logs.md)), `"hex"` ([hex dump](rendering.md#hex-dump)), `"pdf"` (info and pages, see [pdf.md](pdf.md)), `"raw"` (exactly cat; also keeps compressed files compressed) |
 | `language` | syntax name or extension, as with `-l` |
 | `line_numbers` | `true` / `false` |
 | `theme` | theme name |
@@ -113,6 +128,8 @@ Settings a rule can change:
 | `SCAT_THEME` | `--theme` |
 | `SCAT_COLOR` | `--color` |
 | `SCAT_PROTOCOL` | `--protocol` |
+| `SCAT_PAGING` | `--paging` |
+| `SCAT_PAGER`, `PAGER` | the pager command, in that order (default `less -RFX`) |
 | `SCAT_REPO` | GitHub `owner/repo` used by `--update` and `install.sh` (for forks) |
 | `SCAT_INSTALL_DIR` | install directory for `install.sh` |
 | `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` | standard colour switches |

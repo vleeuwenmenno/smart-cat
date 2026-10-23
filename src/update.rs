@@ -150,6 +150,9 @@ fn update(check_only: bool, include_pre: bool) -> Result<(), String> {
 
     fs::rename(&new_binary, &exe).map_err(|e| format!("cannot replace {}: {e}", shown(&exe)))?;
     println!("updated {} from {current} to {latest}", shown(&exe));
+    // Completions and the man page come from the new binary; only files that are
+    // already installed get rewritten.
+    let _ = Command::new(&exe).arg("--refresh-completions").status();
     Ok(())
 }
 

@@ -14,15 +14,22 @@ name = "scat"
 path = "src/main.rs"
 
 [dependencies]
+bzip2 = "0.6.1"
 clap = { version = "4.6.7", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4.6.11"
+clap_mangen = "0.3.3"
+csv = "1.4.0"
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 hayro = "0.8.0"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
 infer = "0.22.0"
 libc = "0.2.191"
 lofty = "0.24.0"
+lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 rustix = { version = "1.1.5", features = ["termios", "event", "fs", "stdio"] }
+ruzstd = { version = "0.9.1", default-features = false, features = ["std", "hash"] }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -32,6 +39,9 @@ syntect = { version = "5.3.0", default-features = false, features = ["parsing", 
 toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "display"] }
 two-face = { version = "0.5.2", default-features = false, features = ["syntect-onig"] }
 unicode-width = "0.2.2"
+
+[dev-dependencies]
+lzma-rust2 = { version = "0.23.0", default-features = false, features = ["std", "xz", "encoder"] }
 
 [profile.release]
 lto = "fat"

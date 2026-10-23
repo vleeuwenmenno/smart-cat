@@ -26,25 +26,27 @@ help:
 	row() { printf "  $${T}%-26s$${R} %s" "$$1" "$$2"; [ -z "$${3:-}" ] || printf " $${D}%s$${R}" "$$3"; printf "\n"; }; \
 	printf "\n$${H}scat$${R}: a smarter cat\n"; \
 	printf "\n$${H}Start here$${R}\n"; \
-	row "make install" "Build and install to $(BINDIR)" "(~30 s)"; \
+	row "make install" "Build, install to $(BINDIR), add completions" "(~30 s)"; \
 	row "make run ARGS=\"-n FILE\"" "Run from source"; \
-	row "make uninstall" "Remove $(BINDIR)/scat"; \
+	row "make uninstall" "Remove scat, its completions and man page"; \
 	printf "\n$${H}Develop$${R}\n"; \
 	row "make test" "Run all tests" "(~10 s)"; \
 	row "make check" "Everything CI runs: format, lint, tests"; \
 	row "make fmt" "Format the code"; \
 	row "make build" "Debug build"; \
 	printf "\n$${H}Release$${R}\n"; \
-	row "make dist" "Static archive in dist/" "(TARGET=$(TARGET))"; \
+	row "make dist" "Static archive in dist/ (binary, completions, man page)" "(TARGET=$(TARGET))"; \
 	row "make bump VERSION=x.y.z" "Commit and tag a release" "(x.y.z-rc.1 = pre-release)"; \
 	printf "\n$${D}Docs: docs/README.md$${R}\n\n"
 
 install: release
 	install -Dm755 target/release/scat "$(BINDIR)/scat"
 	@echo "installed $$("$(BINDIR)/scat" --version) to $(BINDIR)/scat"
+	@"$(BINDIR)/scat" --install-completions
 	@case ":$$PATH:" in *":$(BINDIR):"*) ;; *) echo "$(BINDIR) is not on PATH (fish: fish_add_path $(BINDIR))";; esac
 
 uninstall:
+	@if [ -x "$(BINDIR)/scat" ]; then "$(BINDIR)/scat" --uninstall-completions; fi
 	rm -f "$(BINDIR)/scat"
 
 run:
@@ -81,7 +83,13 @@ dist:
 	env $(DIST_CC_VAR)=$(DIST_CC) $(CARGO) build --release --locked --target $(TARGET)
 	mkdir -p dist/stage
 	cp target/$(TARGET)/release/scat README.md dist/stage/
-	tar -czf dist/scat-$(TARGET).tar.gz -C dist/stage scat README.md
+	@# Completions and the man page come from the binary itself, so only a native build can make them.
+	@if [ "$(TARGET_ARCH)" = "$$(uname -m)" ]; then \
+		mkdir -p dist/stage/completions; \
+		for shell in bash fish zsh; do target/$(TARGET)/release/scat --completions $$shell > dist/stage/completions/scat.$$shell || exit 1; done; \
+		target/$(TARGET)/release/scat --man > dist/stage/scat.1 || exit 1; \
+	else echo "note: cross build, no completions or man page in the archive"; fi
+	tar -czf dist/scat-$(TARGET).tar.gz -C dist/stage $$(cd dist/stage && ls)
 	cd dist && sha256sum scat-$(TARGET).tar.gz > scat-$(TARGET).tar.gz.sha256
 	rm -rf dist/stage
 
